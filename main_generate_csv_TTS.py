@@ -175,7 +175,7 @@ if __name__ == '__main__':
 		
 		# 1. Lungime: Să aibă între 30 și 250 de caractere (audio 3-18 secunde)
 		# Am crescut limita minimă de la 20 la 30 pentru a evita fragmente scurte
-		if len(sentence) < 50 or len(sentence) > 200:
+		if len(sentence) < 40 or len(sentence) > 100:
 			continue
 			
 		# 2. Să înceapă cu literă mare și să se termine cu punct/semn de exclamare

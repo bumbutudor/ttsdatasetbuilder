@@ -13,8 +13,6 @@ from datetime import datetime
 import librosa
 import struct
 import numpy as np
-# import webrtcvad
-# from scipy.ndimage.morphology import binary_dilation
 import soundfile
 import sys
 import csv
@@ -24,24 +22,47 @@ import csv
 chunk = 1024
 sample_format = pyaudio.paInt16
 channels = 1
-frame_rate = 22050
+frame_rate = 44100
 timeout = 60
 
-# For silence trimming - REMOVED webrtcvad dependency
-# We will use librosa.effects.trim instead
+def trim_silence_tts(wav_path):
+	# Strict trimming for TTS
+	# Load with librosa
+	y, sr = librosa.load(wav_path, sr=None)
+	# Trim silence (top_db=30 is standard for speech)
+	yt, _ = librosa.effects.trim(y, top_db=30)
+	# Add short padding (0.1s)
+	pad_len = int(sr * 0.1)
+	yt = np.pad(yt, (pad_len, pad_len), mode='constant')
+	soundfile.write(wav_path, yt, sr)
+
+def trim_silence_stt(wav_path):
+	# Relaxed trimming for STT
+	y, sr = librosa.load(wav_path, sr=None)
+	# Less aggressive trim (top_db=20) or just trim edges
+	yt, _ = librosa.effects.trim(y, top_db=20)
+	# Add generous padding (0.5s)
+	pad_len = int(sr * 0.5)
+	yt = np.pad(yt, (pad_len, pad_len), mode='constant')
+	soundfile.write(wav_path, yt, sr)
 
 if __name__ == '__main__':
 
 	console = Console()
 		
 	table = Table()
-	table.add_column("TSS Dataset Creator (Romanian)", style="cyan")
+	table.add_column("TSS/STT Dataset Creator (Romanian)", style="cyan")
 	table.add_row("2021 - padmalcom")
 	table.add_row("Adapted for Romanian language")
-	table.add_row("www.stonedrum.de")
-	
+	table.add_row("Supports TTS and STT modes")
 	
 	console.print(table)
+	
+	console.print("\nSelect Mode:")
+	console.print("1. [cyan]TTS[/cyan] (Strict trimming, 0.1s silence)")
+	console.print("2. [magenta]STT[/magenta] (Relaxed trimming, 0.5s silence)")
+	mode_in = input() or "1"
+	is_stt = mode_in == "2"
 	
 	console.print("\nPlease select your [red]microphone[/red] (enter the device number).")
 	# Initialisiere pyaudio
@@ -144,6 +165,36 @@ if __name__ == '__main__':
 					# Write the wav file
 					data = stream.read(chunk)
 					frames.append(data)
+					
+					# Check duration
+					recorded_seconds = (len(frames) * chunk) / frame_rate
+					limit = 30 if is_stt else 10
+					
+					if recorded_seconds > limit:
+						console.print(f"\n[bold red]Warning:[/bold red] Recording is {recorded_seconds:.2f}s long (Limit: {limit}s).")
+						console.print("Press: [green]k[/green] to keep, [yellow]d[/yellow] to discard/retry, [blue]s[/blue] to skip.")
+						
+						action = None
+						while action is None:
+							if keyboard.is_pressed('k'):
+								while keyboard.is_pressed('k'): time.sleep(0.1)
+								action = 'keep'
+							elif keyboard.is_pressed('d'):
+								while keyboard.is_pressed('d'): time.sleep(0.1)
+								action = 'discard'
+							elif keyboard.is_pressed('s'):
+								while keyboard.is_pressed('s'): time.sleep(0.1)
+								action = 'skip'
+							time.sleep(0.05)
+						
+						if action == 'discard':
+							stream.close()
+							break
+						elif action == 'skip':
+							stream.close()
+							i += 1
+							break
+
 					stream.close()
 					wf = wave.open(os.path.join(project_folder, wav_file_name), 'wb')
 					wf.setnchannels(channels)
@@ -152,12 +203,12 @@ if __name__ == '__main__':
 					wf.writeframes(b''.join(frames))
 					wf.close()
 					
-					# trim silence?
-					wav, source_sr = librosa.load(str(os.path.join(project_folder, wav_file_name)), sr=None)
-					# wav = trim_long_silences(wav)
-					# Use librosa to trim silence (top_db=30 is a good default)
-					wav, _ = librosa.effects.trim(wav, top_db=30)
-					soundfile.write(str(os.path.join(project_folder, wav_file_name)), wav, source_sr)
+					# trim silence based on mode
+					wav_path = str(os.path.join(project_folder, wav_file_name))
+					if is_stt:
+						trim_silence_stt(wav_path)
+					else:
+						trim_silence_tts(wav_path)
 					
 					i += 1
 					break

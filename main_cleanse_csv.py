@@ -15,7 +15,7 @@ if __name__ == '__main__':
 	table.add_column("CSV Cleaner (Romanian)", style="cyan")
 	table.add_row("Validates metadata.csv by checking if audio files exist.")
 	table.add_row("Removes entries where the .wav file is missing.")
-	table.add_row("Adapted for Romanian language")
+	table.add_row("Common tool for both TTS and STT datasets.")
 	
 	console.print(table)
 		

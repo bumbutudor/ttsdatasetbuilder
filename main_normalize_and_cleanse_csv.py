@@ -7,22 +7,34 @@ import os
 import sys
 import csv
 
-c_map_de = {
+c_map_ro = {
 	'€': 'euro',
-	'$': 'dollar',
-	'mr.': 'Mister',
-	'mrs.': 'Mistress',
-	'mme': 'Madame',
+	'$': 'dolari',
+	'dl.': 'domnul',
+	'dna.': 'doamna',
+	'd-na': 'doamna',
+	'd-ra': 'domnișoara',
 	'etc.': 'et cetera',
-	'usw.': 'und so weiter',
-	
-	
+	'pt.': 'pentru',
+	'nr.': 'numărul',
+	'str.': 'strada',
+	'bl.': 'blocul',
+	'sc.': 'scara',
+	'ap.': 'apartamentul',
+	'jud.': 'județul',
+	'sec.': 'secolul',
+	'%': 'la sută',
 	'“': '"',
-	'„': '"'
+	'„': '"',
+	'»': '"',
+	'«': '"'
 }
 
-def cleanse(text, lang):
-	# todo
+def cleanse(row, lang):
+	text = row[2] # The cleansed text column
+	if lang == 'ro':
+		for k, v in c_map_ro.items():
+			text = text.replace(k, v)
 	return text
 
 if __name__ == '__main__':
@@ -30,9 +42,9 @@ if __name__ == '__main__':
 	console = Console()
 		
 	table = Table()
-	table.add_column("CSV text normalizer", style="cyan")
+	table.add_column("CSV text normalizer (Romanian)", style="cyan")
 	table.add_row("Normalizes a metadata.csv by looking at the second column and normalizing numbers and abreviations.")
-	table.add_row("2021 - padmalcom")
+	table.add_row("Adapted for Romanian language")
 	table.add_row("www.stonedrum.de")
 	
 	
@@ -63,17 +75,9 @@ if __name__ == '__main__':
 	console.print("Project folder is [red]%s" % project_folder)
 	
 	# Select language
-	default_lang = 'de'
-	console.print("Please select a [red]language[/red] to collect data for (default [i]%s[/i])." % default_lang)
-	in_lang = input()
-	if not in_lang:
-		in_lang = default_lang
-		
-	if not in_lang in ['de', 'en', 'fr', 'it']:
-		console.print("Language [red]%s[/red] is not supported by wikipedia." % in_lang)
-		sys.exit(0)
-		
-	console.print("Language is set to [red]%s[/red]." % in_lang)	
+	default_lang = 'ro'
+	console.print("Language is set to [red]%s[/red]." % default_lang)
+	in_lang = default_lang	
 	
 	with open(metadata_csv_file, encoding = "utf-8") as csv_file:
 			csv_reader = csv.reader(csv_file, delimiter='|')
@@ -86,7 +90,7 @@ if __name__ == '__main__':
 		sys.exit(0)
 		
 	metadata_csv_file_normalized = os.path.join(project_folder, 'metadata_normalized.csv')
-	csv_out = open(metadata_csv_file_normalized, 'wb')
+	csv_out = open(metadata_csv_file_normalized, 'w', encoding='utf-8', newline='')
 	writer = csv.writer(csv_out, delimiter='|')
 	
 	i = 0

@@ -1,1 +1,0 @@
-, die aufgerufene Datei, der Name des anfordernden Providers, Angaben zum verwendeten Browser und Betriebssystem sowie ggf. weitere voranstehende Informationen.

@@ -1,1 +1,0 @@
-Nun brauchen wir nur noch die Einstellungen in der Datei /etc/modify.d und die Datei /etc/interfaces.

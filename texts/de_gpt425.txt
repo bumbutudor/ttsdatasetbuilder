@@ -1,1 +1,0 @@
-Der Button "Link speichern unter" erlaubt es, den Text und die Adresse zu speichern.

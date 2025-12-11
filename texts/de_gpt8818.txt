@@ -1,1 +1,0 @@
-Man kann nun selbst bestimmen, welche Farbe und Größe ein bestimmter Link besitzen sollte.

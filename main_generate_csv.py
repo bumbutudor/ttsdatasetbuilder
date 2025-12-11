@@ -20,6 +20,29 @@ replacement_map = {
 	'„': '"'
 }
 
+c_map_ro = {
+	'€': 'euro',
+	'$': 'dolari',
+	'dl.': 'domnul',
+	'dna.': 'doamna',
+	'd-na': 'doamna',
+	'd-ra': 'domnișoara',
+	'etc.': 'et cetera',
+	'pt.': 'pentru',
+	'nr.': 'numărul',
+	'str.': 'strada',
+	'bl.': 'blocul',
+	'sc.': 'scara',
+	'ap.': 'apartamentul',
+	'jud.': 'județul',
+	'sec.': 'secolul',
+	'%': 'la sută',
+	'“': '"',
+	'„': '"',
+	'»': '"',
+	'«': '"'
+}
+
 def curata_text(text):
     """
     Curata textul brut extras din PDF-uri sau fisiere text.
@@ -34,6 +57,12 @@ def curata_text(text):
     
     # 3. Eliminăm spațiile multiple
     text = re.sub(r'\s+', ' ', text)
+
+    # 4. Expandăm abrevieri care cauzează probleme la segmentare
+    text = text.replace("î.Hr.", "înainte de Hristos")
+    text = text.replace("d.Hr.", "după Hristos")
+    text = text.replace(" a.c.", " anul curent")
+    text = text.replace(" ș.a.", " și altele")
     
     return text.strip()
 
@@ -144,8 +173,9 @@ if __name__ == '__main__':
 		
 		# --- FILTERS (from split_pdf_into_chunks.py) ---
 		
-		# 1. Lungime: Să aibă între 20 și 200 de caractere (audio 2-15 secunde)
-		if len(sentence) < 20 or len(sentence) > 200:
+		# 1. Lungime: Să aibă între 30 și 250 de caractere (audio 3-18 secunde)
+		# Am crescut limita minimă de la 20 la 30 pentru a evita fragmente scurte
+		if len(sentence) < 50 or len(sentence) > 200:
 			continue
 			
 		# 2. Să înceapă cu literă mare și să se termine cu punct/semn de exclamare
@@ -156,6 +186,15 @@ if __name__ == '__main__':
 		# 3. Să nu conțină prea multe cifre (ex: ani, sume, date statistice care pot incurca TTS-ul daca nu sunt normalizate)
 		if re.search(r'[0-9]{2,}', sentence): 
 			continue
+
+		# 4. Filtru număr de cuvinte: O propoziție validă ar trebui să aibă cel puțin 5 cuvinte
+		# Elimină titluri scurte gen "Listă de conjecturi." (3 cuvinte)
+		if len(sentence.split()) < 5:
+			continue
+
+		# 5. Filtru pentru abrevieri la final (ex: "sec. III î.") care au fost tăiate greșit de Spacy
+		if sentence.endswith(" î.") or sentence.endswith(" sec.") or sentence.endswith(" vol.") or sentence.endswith(" p."):
+			continue
 			
 		# --- END FILTERS ---
 
@@ -164,6 +203,20 @@ if __name__ == '__main__':
 		
 		# clean text for the third column (normalized text)
 		cleansed_sentence = sentence
+		
+		# Apply Romanian normalization map
+		for k, v in c_map_ro.items():
+			# Use regex to replace whole words if they end with dot, or simple replace for symbols
+			if k.endswith('.'):
+				# Escape dot for regex
+				k_esc = re.escape(k)
+				# Replace only if surrounded by whitespace or start/end of string
+				# This prevents replacing inside words, though for these specific abbrevs simple replace is usually fine
+				cleansed_sentence = cleansed_sentence.replace(k, v)
+			else:
+				cleansed_sentence = cleansed_sentence.replace(k, v)
+		
+		# Apply basic replacement map (quotes etc) if not covered above
 		for character, replacement in replacement_map.items():
 			cleansed_sentence = cleansed_sentence.replace(character, replacement)
 		

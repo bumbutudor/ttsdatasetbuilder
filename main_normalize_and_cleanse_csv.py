@@ -7,46 +7,15 @@ import os
 import sys
 import csv
 
-c_map_ro = {
-	'€': 'euro',
-	'$': 'dolari',
-	'dl.': 'domnul',
-	'dna.': 'doamna',
-	'd-na': 'doamna',
-	'd-ra': 'domnișoara',
-	'etc.': 'et cetera',
-	'pt.': 'pentru',
-	'nr.': 'numărul',
-	'str.': 'strada',
-	'bl.': 'blocul',
-	'sc.': 'scara',
-	'ap.': 'apartamentul',
-	'jud.': 'județul',
-	'sec.': 'secolul',
-	'%': 'la sută',
-	'“': '"',
-	'„': '"',
-	'»': '"',
-	'«': '"'
-}
-
-def cleanse(row, lang):
-	text = row[2] # The cleansed text column
-	if lang == 'ro':
-		for k, v in c_map_ro.items():
-			text = text.replace(k, v)
-	return text
-
 if __name__ == '__main__':
 
 	console = Console()
 		
 	table = Table()
-	table.add_column("CSV text normalizer (Romanian)", style="cyan")
-	table.add_row("Normalizes a metadata.csv by looking at the second column and normalizing numbers and abreviations.")
+	table.add_column("CSV Cleaner (Romanian)", style="cyan")
+	table.add_row("Validates metadata.csv by checking if audio files exist.")
+	table.add_row("Removes entries where the .wav file is missing.")
 	table.add_row("Adapted for Romanian language")
-	table.add_row("www.stonedrum.de")
-	
 	
 	console.print(table)
 		
@@ -74,38 +43,46 @@ if __name__ == '__main__':
 	
 	console.print("Project folder is [red]%s" % project_folder)
 	
-	# Select language
-	default_lang = 'ro'
-	console.print("Language is set to [red]%s[/red]." % default_lang)
-	in_lang = default_lang	
-	
 	with open(metadata_csv_file, encoding = "utf-8") as csv_file:
 			csv_reader = csv.reader(csv_file, delimiter='|')
 			csv_data = list(csv_reader)
 			
-	console.print("Found %d sentences." % len(csv_data))
+	console.print("Found %d sentences in CSV." % len(csv_data))
 
 	if len(csv_data) == 0:
-		console.print("You need to add some sentences to your text files first. Exiting.")
+		console.print("CSV is empty. Exiting.")
 		sys.exit(0)
 		
-	metadata_csv_file_normalized = os.path.join(project_folder, 'metadata_normalized.csv')
-	csv_out = open(metadata_csv_file_normalized, 'w', encoding='utf-8', newline='')
+	metadata_csv_file_cleaned = os.path.join(project_folder, 'metadata_cleaned.csv')
+	
+	# Open with newline='' to prevent extra blank lines in Windows
+	csv_out = open(metadata_csv_file_cleaned, 'w', encoding='utf-8', newline='')
 	writer = csv.writer(csv_out, delimiter='|')
+	
+	valid_count = 0
+	removed_count = 0
 	
 	i = 0
 	while i < len(csv_data):
-		# clean missing wav files
-		if os.path.exists(os.path.join(project_folder, csv_data[i][0])):
+		wav_path = os.path.join(project_folder, csv_data[i][0])
 		
-			# normlize
-			cleansed = cleanse(csv_data[i], in_lang)
-			writer.write([csv_data[i][0], csv_data[i][1], cleansed])
+		# Check if wav file exists
+		if os.path.exists(wav_path):
+			# Write the row exactly as is (normalization is now done in generation step)
+			writer.write(csv_data[i])
+			valid_count += 1
+		else:
+			removed_count += 1
+			
 		i += 1
 	csv_out.close()
+	
+	# Backup original
+	if os.path.exists(os.path.join(project_folder, 'metadata_original.csv')):
+		os.remove(os.path.join(project_folder, 'metadata_original.csv'))
 		
 	os.rename(metadata_csv_file, os.path.join(project_folder, 'metadata_original.csv'))
-	os.rename(metadata_csv_file_normalized, metadata_csv_file)
-	console.print("Done")
+	os.rename(metadata_csv_file_cleaned, metadata_csv_file)
 	
-	
+	console.print(f"Done. Kept {valid_count} valid entries. Removed {removed_count} missing files.")
+

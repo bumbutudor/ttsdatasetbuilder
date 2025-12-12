@@ -68,24 +68,32 @@ def normalize_tts(text):
 		else:
 			text = text.replace(k, v)
 			
-	# 3. Inlocuire linii de pauza (en-dash, em-dash) cu virgula
+	# 3. Gestionare DOUA PUNCTE (:)
+	# Pasul 3.1: Intre cifre (ore, scoruri) -> inlocuim cu " și "
+	# Ex: 12:30 -> 12 și 30. Ulterior num2words va face "doisprezece și treizeci"
+	text = re.sub(r'(\d):(\d)', r'\1 și \2', text)
+
+	# Pasul 3.2: Intre cuvinte (gramatical) -> inlocuim cu virgula
+	text = text.replace(':', ', ')
+
+	# 4. Inlocuire linii de pauza (en-dash, em-dash) cu virgula
 	# Atentie: nu inlocuim cratima (-) care leaga cuvinte (s-a, vis-à-vis)
 	text = text.replace('–', ', ').replace('—', ', ')
 
-	# 4. Inlocuire paranteze rotunde cu virgule
+	# 5. Inlocuire paranteze rotunde cu virgule
 	text = text.replace('(', ', ').replace(')', ', ')
 
-	# 5. Eliminare ghilimele si apostroafe
+	# 6. Eliminare ghilimele si apostroafe
 	# Ghilimelele nu se aud. Apostroful se sterge pentru cursivitate (Feynman's -> Feynmans)
 	chars_to_remove = ['”', '“', '„', '»', '«', '"', "'", "’"]
 	for c in chars_to_remove:
 		text = text.replace(c, '')
 
-	# 6. Gestionare initiale (J. M. Ziman -> J M Ziman)
+	# 7. Gestionare initiale (J. M. Ziman -> J M Ziman)
 	# Eliminam punctul dupa litere mari singulare
 	text = re.sub(r'\b([A-Z])\.', r'\1 ', text)
 
-	# 7. Expandare cifre romane (ex: XX-lea)
+	# 8. Expandare cifre romane (ex: XX-lea)
 	def replace_roman(match):
 		roman = match.group(1)
 		# suffix = match.group(2) # lea sau a
@@ -105,7 +113,7 @@ def normalize_tts(text):
 	text = text.replace('al al ', 'al ')
 	text = text.replace('a a ', 'a ')
 
-	# 8. Expandare numere folosind num2words
+	# 9. Expandare numere folosind num2words
 	def replace_num(match):
 		num_str = match.group(0)
 		try:
@@ -122,7 +130,7 @@ def normalize_tts(text):
 	# Cautam numere (intregi sau cu zecimale)
 	text = re.sub(r'\b\d+([.,]\d+)?\b', replace_num, text)
 	
-	# 9. Curatenie finala punctuatie
+	# 10. Curatenie finala punctuatie
 	# Inlocuim secvente de spatii si virgule
 	text = re.sub(r'\s+', ' ', text)       # spatii multiple -> un spatiu
 	text = re.sub(r'\s+,', ',', text)      # spatiu inainte de virgula -> virgula

@@ -29,6 +29,7 @@ c_map_ro = {
 	'ap.': 'apartamentul',
 	'jud.': 'județul',
 	'sec.': 'secolul',
+	'sf.': 'sfântul',
 	'%': 'la sută',
 	'+': 'plus',
 	'=': 'egal',
@@ -39,8 +40,26 @@ c_map_ro = {
 	'«': '"'
 }
 
+def roman_to_int(s):
+	rom_val = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
+	int_val = 0
+	for i in range(len(s)):
+		if s[i] not in rom_val:
+			return 0
+		if i > 0 and rom_val[s[i]] > rom_val[s[i - 1]]:
+			int_val += rom_val[s[i]] - 2 * rom_val[s[i - 1]]
+		else:
+			int_val += rom_val[s[i]]
+	return int_val
+
 def normalize_tts(text):
-	# 1. Expandare abrevieri si simboluri
+	# 0. Eliminare URL-uri
+	text = re.sub(r'https?://\S+', '', text)
+
+	# 1. Eliminare continut paranteze patrate (referinte bibliografice [12], [3])
+	text = re.sub(r'\[.*?\]', '', text)
+
+	# 2. Expandare abrevieri si simboluri din dictionar
 	for k, v in c_map_ro.items():
 		if k.endswith('.'):
 			k_esc = re.escape(k)
@@ -49,14 +68,44 @@ def normalize_tts(text):
 		else:
 			text = text.replace(k, v)
 			
-	# 2. Eliminare paranteze si continutul lor (optional, dar recomandat pentru TTS curat)
-	# text = re.sub(r'\([^)]*\)', '', text)
-	# text = re.sub(r'\[[^\]]*\]', '', text)
+	# 3. Inlocuire linii de pauza (en-dash, em-dash) cu virgula
+	# Atentie: nu inlocuim cratima (-) care leaga cuvinte (s-a, vis-à-vis)
+	text = text.replace('–', ', ').replace('—', ', ')
+
+	# 4. Inlocuire paranteze rotunde cu virgule
+	text = text.replace('(', ', ').replace(')', ', ')
+
+	# 5. Eliminare ghilimele si apostroafe
+	# Ghilimelele nu se aud. Apostroful se sterge pentru cursivitate (Feynman's -> Feynmans)
+	chars_to_remove = ['”', '“', '„', '»', '«', '"', "'", "’"]
+	for c in chars_to_remove:
+		text = text.replace(c, '')
+
+	# 6. Gestionare initiale (J. M. Ziman -> J M Ziman)
+	# Eliminam punctul dupa litere mari singulare
+	text = re.sub(r'\b([A-Z])\.', r'\1 ', text)
+
+	# 7. Expandare cifre romane (ex: XX-lea)
+	def replace_roman(match):
+		roman = match.group(1)
+		# suffix = match.group(2) # lea sau a
+		val = roman_to_int(roman)
+		if val == 0: return match.group(0)
+		try:
+			# num2words ordinal in ro returneaza "al X-lea"
+			words = num2words(val, lang='ro', to='ordinal')
+			return words
+		except:
+			return match.group(0)
+
+	# Cautam forme de genul XX-lea, XIX-lea, XII-a
+	text = re.sub(r'\b([IVXLCDM]+)-(lea|a)\b', replace_roman, text)
 	
-	# 3. Eliminare ghilimele (nu se aud)
-	text = text.replace('"', '').replace("'", "")
-	
-	# 4. Expandare numere folosind num2words
+	# Curatam eventualele dubluri de "al al" create de num2words
+	text = text.replace('al al ', 'al ')
+	text = text.replace('a a ', 'a ')
+
+	# 8. Expandare numere folosind num2words
 	def replace_num(match):
 		num_str = match.group(0)
 		try:
@@ -72,6 +121,15 @@ def normalize_tts(text):
 
 	# Cautam numere (intregi sau cu zecimale)
 	text = re.sub(r'\b\d+([.,]\d+)?\b', replace_num, text)
+	
+	# 9. Curatenie finala punctuatie
+	# Inlocuim secvente de spatii si virgule
+	text = re.sub(r'\s+', ' ', text)       # spatii multiple -> un spatiu
+	text = re.sub(r'\s+,', ',', text)      # spatiu inainte de virgula -> virgula
+	text = re.sub(r',+', ',', text)        # virgule multiple -> o virgula
+	text = re.sub(r',\s*,', ', ', text)    # virgula spatiu virgula -> virgula spatiu
+	text = re.sub(r',\s*\.', '.', text)    # virgula punct -> punct
+	text = text.strip(' ,')                # curatare capete
 	
 	return text
 

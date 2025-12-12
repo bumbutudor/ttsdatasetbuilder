@@ -53,6 +53,31 @@ def _next_wav_index_from_metadata(csv_path: str) -> int:
     return max_idx + 1
 
 
+def _load_image_bytes_for_ollama(image_path: str, max_dim: int = 1280) -> bytes:
+    """Încarcă o imagine ca bytes pentru câmpul `images` din ollama.chat.
+
+    - Dacă Pillow e disponibil, face resize + conversie JPEG (mai mic și mai stabil pentru modele).
+    - Altfel, returnează bytes brute din fișier.
+    """
+    try:
+        from PIL import Image  # type: ignore
+
+        with Image.open(image_path) as im:
+            im = im.convert('RGB')
+            w, h = im.size
+            scale = min(1.0, float(max_dim) / float(max(w, h)))
+            if scale < 1.0:
+                im = im.resize((int(w * scale), int(h * scale)))
+
+            bio = io.BytesIO()
+            im.save(bio, format='JPEG', quality=85, optimize=True)
+            return bio.getvalue()
+    except Exception:
+        # Fallback: trimitem fișierul exact cum e.
+        with open(image_path, 'rb') as f:
+            return f.read()
+
+
 def _extract_model_names(models_response):
     """Returnează o listă de nume de modele din ollama.list(), compatibil cu mai multe versiuni."""
     # Versiuni mai noi: ListResponse(models=[Model(model='llava:latest', ...), ...])
@@ -113,7 +138,9 @@ def pdf_to_images(pdf_path, temp_dir="temp_pages"):
     
     for page_num in range(len(doc)):
         page = doc.load_page(page_num)
-        pix = page.get_pixmap(dpi=300) # DPI mare pentru claritate
+        # DPI prea mare poate produce imagini uriașe și poate duce la erori 500 (OOM/crash) în model.
+        # 200 este un compromis bun pentru text imprimat.
+        pix = page.get_pixmap(dpi=200)
         image_path = os.path.join(temp_dir, f"page_{page_num:04d}.png")
         pix.save(image_path)
         image_paths.append(image_path)
@@ -132,7 +159,11 @@ def process_image_with_ollama(image_path, mode):
         "Returnează doar liniile CSV în format: TextBrut|TextNormalizat (2 coloane)."
     )
 
+    # IMPORTANT: API-ul Ollama pentru imagini așteaptă bytes (base64 în request), nu o cale de fișier.
+    # În plus, imaginile foarte mari pot declanșa 500 (OOM/crash) în backend. Facem resize+JPEG când e posibil.
     try:
+        image_bytes = _load_image_bytes_for_ollama(image_path, max_dim=1280)
+
         response = ollama.chat(
             model=config.MODEL_NAME,
             messages=[
@@ -143,12 +174,30 @@ def process_image_with_ollama(image_path, mode):
                 {
                     'role': 'user',
                     'content': user_message,
-                    'images': [image_path]
+                    'images': [image_bytes]
                 }
             ]
         )
         return response['message']['content']
     except Exception as e:
+        msg = str(e)
+        # Retry mai agresiv pe cazuri tipice de 500.
+        if '500' in msg or 'Internal Server Error' in msg:
+            try:
+                console.print(f"[yellow]500 la procesare; retry cu imagine mai mică pentru {os.path.basename(image_path)}...[/yellow]")
+                image_bytes = _load_image_bytes_for_ollama(image_path, max_dim=896)
+                response = ollama.chat(
+                    model=config.MODEL_NAME,
+                    messages=[
+                        {'role': 'system', 'content': system_prompt},
+                        {'role': 'user', 'content': user_message, 'images': [image_bytes]},
+                    ]
+                )
+                return response['message']['content']
+            except Exception as e2:
+                console.print(f"[red]Eroare procesare AI pentru {image_path}: {e2}[/red]")
+                return ""
+
         console.print(f"[red]Eroare procesare AI pentru {image_path}: {e}[/red]")
         return ""
 

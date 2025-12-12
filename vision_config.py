@@ -1,7 +1,5 @@
 # Configurare pentru Modelul Vision (Ollama)
 
-# Modelul recomandat: "llava" sau "llama3.2-vision"
-# Asigura-te ca ai rulat: "ollama pull llava" in terminal
 MODEL_NAME = "qwen3-vl:235b-cloud" 
 
 import os

@@ -148,15 +148,40 @@ def pdf_to_images(pdf_path, temp_dir="temp_pages"):
     doc.close()
     return image_paths
 
+
+def iter_pdf_page_images(pdf_path: str, temp_dir: str, dpi: int = 200):
+    """Generează imagini pentru paginile PDF una câte una.
+
+    Avantaj: nu randează toate paginile upfront, astfel începe procesarea AI imediat și
+    bara de progres se mișcă după fiecare pagină procesată.
+    """
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+
+    doc = fitz.open(pdf_path)
+    try:
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            pix = page.get_pixmap(dpi=dpi)
+            image_path = os.path.join(temp_dir, f"page_{page_num:04d}.png")
+            pix.save(image_path)
+            yield page_num, image_path
+    finally:
+        doc.close()
+
 def process_image_with_ollama(image_path, mode):
     """Trimite imaginea la Ollama și primește CSV-ul."""
     
     system_prompt = config.SYSTEM_PROMPT_TTS if mode == "TTS" else config.SYSTEM_PROMPT_STT
     
-    # Instrucțiune specifică pentru imaginea curentă
+    # Instrucțiune specifică pentru imaginea curentă (pagină PDF)
+    # Cerință: extrage TOT textul de pe pagină, dar o propoziție = o linie CSV.
     user_message = (
-        "Analizează această imagine și extrage textul conform regulilor din System Prompt. "
-        "Returnează doar liniile CSV în format: TextBrut|TextNormalizat (2 coloane)."
+        "Analizează această imagine (o pagină) și extrage TOT textul relevant. "
+        "Împarte în propoziții/segmente: o propoziție pe linie. "
+        "Returnează DOAR liniile CSV în format: TextBrut|TextNormalizat (2 coloane). "
+        "NU include titluri sau markdown. "
+        "NU folosi caracterul | în interiorul textului (doar ca separator între cele 2 coloane)."
     )
 
     # IMPORTANT: API-ul Ollama pentru imagini așteaptă bytes (base64 în request), nu o cale de fișier.
@@ -331,7 +356,29 @@ def main():
     # Temp folder (în proiect) - va fi șters la final
     temp_dir = os.path.join(project_folder, "temp_vision_processing")
 
-    all_data = []
+    extracted_segments = 0
+
+    # Estimăm workload-ul ca să nu pară că "stă" la 0% minute întregi.
+    # - TXT: aproximăm nr. de chunk-uri din mărimea fișierului (bytes).
+    # - PDF: numărăm paginile (len(doc)).
+    chunk_size = 6000
+    estimated_txt_chunks = 0
+    for tf in txt_files:
+        try:
+            sz = os.path.getsize(tf)
+            estimated_txt_chunks += max(1, int((sz + (chunk_size - 1)) // chunk_size))
+        except Exception:
+            estimated_txt_chunks += 1
+
+    total_pdf_pages = 0
+    for pdf_path in pdf_files:
+        try:
+            doc = fitz.open(pdf_path)
+            total_pdf_pages += len(doc)
+            doc.close()
+        except Exception:
+            # Dacă nu putem deschide PDF-ul acum, lăsăm 0; va apărea eroarea la procesare.
+            pass
 
     with Progress(
         SpinnerColumn(),
@@ -341,69 +388,110 @@ def main():
         console=console
     ) as progress:
 
-        # 1) TXT -> LLM (fără imagini)
-        if txt_files:
-            task_txt = progress.add_task(f"[blue]Procesare TXT cu AI ({mode})...", total=len(txt_files))
-            for tf in txt_files:
-                try:
-                    with open(tf, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                except Exception as e:
-                    console.print(f"[red]Eroare citire TXT {tf}: {e}[/red]")
-                    progress.advance(task_txt)
-                    continue
+        # Deschidem o singură dată CSV-ul și scriem incremental (în timp real).
+        # Fără header, compatibil cu main_generator.py.
+        csv_file = open(output_csv, 'a', encoding='utf-8', newline='')
+        writer = csv.writer(csv_file, delimiter='|')
+        try:
 
-                # Chunking simplu ca să evităm prompt-uri uriașe
-                chunk_size = 6000
-                for start in range(0, len(content), chunk_size):
-                    chunk = content[start:start+chunk_size]
-                    if not chunk.strip():
-                        continue
-                    resp = process_text_with_ollama(chunk, mode)
-                    rows = parse_ai_response(resp, os.path.basename(tf))
-                    for row in rows:
-                        wav_file_name = (str(valid_count) + '.wav').rjust(12, '0')
-                        all_data.append([wav_file_name, row[1], row[2]])
-                        valid_count += 1
-
-                progress.advance(task_txt)
-
-        # 2) PDF -> imagini -> Vision LLM
-        if pdf_files:
-            task_pdf = progress.add_task(f"[green]Procesare PDF cu Vision AI ({mode})...", total=len(pdf_files))
-            for pdf_path in pdf_files:
-                # Conversie PDF -> Imagini
-                try:
-                    image_paths = pdf_to_images(pdf_path, temp_dir)
-                except Exception as e:
-                    console.print(f"[red]Eroare conversie PDF {pdf_path}: {e}[/red]")
-                    progress.advance(task_pdf)
-                    continue
-
-                for img_path in image_paths:
-                    response_text = process_image_with_ollama(img_path, mode)
-                    rows = parse_ai_response(response_text, os.path.basename(img_path))
-
-                    for row in rows:
-                        wav_file_name = (str(valid_count) + '.wav').rjust(12, '0')
-                        all_data.append([wav_file_name, row[1], row[2]])
-                        valid_count += 1
-
-                    # Curățenie imediată imagine procesată
+            # 1) TXT -> LLM (fără imagini)
+            if txt_files:
+                task_txt = progress.add_task(
+                    f"[blue]Procesare TXT cu AI ({mode})...",
+                    total=max(1, estimated_txt_chunks),
+                )
+                for tf in txt_files:
                     try:
-                        os.remove(img_path)
-                    except Exception:
-                        pass
+                        with open(tf, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                    except Exception as e:
+                        console.print(f"[red]Eroare citire TXT {tf}: {e}[/red]")
+                        progress.advance(task_txt)
+                        continue
 
-                progress.advance(task_pdf)
+                    # Chunking simplu ca să evităm prompt-uri uriașe
+                    for start in range(0, len(content), chunk_size):
+                        chunk = content[start:start+chunk_size]
+                        if not chunk.strip():
+                            progress.advance(task_txt)
+                            continue
 
-    # Salvare CSV (FARA header, ca să nu strice main_generator.py)
-    if all_data:
-        with open(output_csv, 'a', encoding='utf-8', newline='') as f:
-            writer = csv.writer(f, delimiter='|')
-            writer.writerows(all_data)
+                        progress.update(
+                            task_txt,
+                            description=f"[blue]TXT ({mode})[/blue]: {os.path.basename(tf)} [{start//chunk_size + 1}]",
+                        )
+                        resp = process_text_with_ollama(chunk, mode)
+                        rows = parse_ai_response(resp, os.path.basename(tf))
 
-        console.print(f"\n[bold green]Succes![/bold green] Au fost extrase {len(all_data)} segmente.")
+                        # Scriere incrementală (real-time)
+                        if rows:
+                            out_rows = []
+                            for row in rows:
+                                wav_file_name = f"{valid_count:012d}.wav"
+                                out_rows.append([wav_file_name, row[1], row[2]])
+                                valid_count += 1
+                            writer.writerows(out_rows)
+                            csv_file.flush()
+                            extracted_segments += len(out_rows)
+
+                        progress.advance(task_txt)
+
+                # Reset descriere după TXT
+                progress.update(task_txt, description=f"[blue]Procesare TXT cu AI ({mode})...[/blue]")
+
+            # 2) PDF -> imagini -> Vision LLM
+            if pdf_files:
+                task_pdf = progress.add_task(
+                    f"[green]Procesare PDF cu Vision AI ({mode})...",
+                    total=max(1, total_pdf_pages),
+                )
+                for pdf_path in pdf_files:
+                    # PDF -> imagine pagină-cu-pagină -> Vision LLM
+                    try:
+                        page_iter = iter_pdf_page_images(pdf_path, temp_dir, dpi=200)
+                    except Exception as e:
+                        console.print(f"[red]Eroare deschidere PDF {pdf_path}: {e}[/red]")
+                        continue
+
+                    for page_num, img_path in page_iter:
+                        progress.update(
+                            task_pdf,
+                            description=f"[green]PDF ({mode})[/green]: {os.path.basename(pdf_path)} | page {page_num + 1}",
+                        )
+                        response_text = process_image_with_ollama(img_path, mode)
+                        rows = parse_ai_response(response_text, os.path.basename(img_path))
+
+                        # Scriere incrementală imediat după fiecare pagină procesată
+                        if rows:
+                            out_rows = []
+                            for row in rows:
+                                wav_file_name = f"{valid_count:012d}.wav"
+                                out_rows.append([wav_file_name, row[1], row[2]])
+                                valid_count += 1
+                            writer.writerows(out_rows)
+                            csv_file.flush()
+                            extracted_segments += len(out_rows)
+
+                        # Curățenie imediată imagine procesată
+                        try:
+                            os.remove(img_path)
+                        except Exception:
+                            pass
+
+                        progress.advance(task_pdf)
+
+                # Reset descriere după PDF
+                progress.update(task_pdf, description=f"[green]Procesare PDF cu Vision AI ({mode})...[/green]")
+
+        finally:
+            try:
+                csv_file.close()
+            except Exception:
+                pass
+
+    # Raportare finală (CSV-ul a fost scris incremental)
+    if extracted_segments > 0:
+        console.print(f"\n[bold green]Succes![/bold green] Au fost extrase {extracted_segments} segmente.")
         console.print(f"Datele au fost salvate în: [yellow]{output_csv}[/yellow]")
     else:
         console.print("\n[red]Nu s-au extras date valide. Verifică dacă modelul AI funcționează corect.[/red]")

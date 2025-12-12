@@ -26,6 +26,10 @@ c_map_ro = {
 	'»': '"',
 	'«': '"',
 	
+	# Pronunții speciale / nume proprii (TTS)
+	'Facebook': 'Feisbuc',
+	'facebook': 'feisbuc',
+	
 	# Titluri, Persoane si Adresare
 	'dl.': 'domnul',
 	'dna.': 'doamna',

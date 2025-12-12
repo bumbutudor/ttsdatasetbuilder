@@ -121,7 +121,6 @@ if __name__ == '__main__':
 		if not sentence[0].isupper():
 			continue
 			
-		# 3. Nu filtram cifrele! Whisper trebuie sa invete sa le scrie.
 		
 		# 4. Minim 3 cuvinte (mai relaxat decat TTS)
 		if len(sentence.split()) < 3:
@@ -132,7 +131,6 @@ if __name__ == '__main__':
 		sentence = sentence.replace("\n", " ")
 		sentence = sentence.replace("\t", " ")
 		
-		# For STT, the "normalized" column (3rd) is usually the same as the original
 		# because we want the model to learn standard written output.
 		cleansed_sentence = sentence
 		

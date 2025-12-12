@@ -171,56 +171,143 @@ def normalize_tts(text):
 		else:
 			text = text.replace(k, v)
 			
-	# 3. Gestionare DOUA PUNCTE (:)
-	# Pasul 3.1: Intre cifre (ore, scoruri) -> inlocuim cu " și "
-	# Ex: 12:30 -> 12 și 30. Ulterior num2words va face "doisprezece și treizeci"
-	text = re.sub(r'(\d):(\d)', r'\1 și \2', text)
+	# --- NORMALIZARE AVANSATA SIMBOLURI (Matematica, Fizica, Punctuație) ---
 
-	# Pasul 3.2: Intre cuvinte (gramatical) -> inlocuim cu virgula
+	# 3.1 Mulțimi specifice (N*, R*, Z*, Q*) -> N stelat
+	text = re.sub(r'([NRZQ])\*', r'\1 stelat', text)
+
+	# 3.2 Gradele Celsius/Fahrenheit
+	text = text.replace("°C", " grade Celsius")
+	text = text.replace("°F", " grade Fahrenheit")
+	text = text.replace("°", " grade")
+
+	# 3.3 Unități de măsură compuse
+	text = text.replace("km/h", " kilometri pe oră")
+	text = text.replace("m/s", " metri pe secundă")
+
+	# 3.4 Minus vs Cratimă
+	# Cratima rămâne cratimă doar între litere (ex: s-a, teoretic-fizic).
+	# În rest (între cifre, spații, sau unar), devine "minus".
+	text = re.sub(r'(?<=\d)-(?=\d)', ' minus ', text)   # 5-2
+	text = re.sub(r'(?<=\s)-(?=\d)', ' minus ', text)   # -5 (unar)
+	text = re.sub(r'(?<=\d)-(?=\s)', ' minus ', text)   # 5- 
+	text = text.replace("−", " minus ") # Simbolul matematic real de minus
+
+	# 3.5 Împărțire vs Două puncte
+	# : devine "împărțit la" doar între cifre (pentru operatii matematice)
+	# ATENTIE: Conflict cu Ora/Scor (12:30). 
+	# Regula anterioara (12:30 -> 12 și 30) trebuie sa aiba prioritate daca e ora.
+	# Dar daca e 10 : 2 = 5? E greu de distins fara context.
+	# Presupunem ca "si" e mai sigur pentru general (ora/scor), iar "impartit la" e specific.
+	# Vom folosi regula anterioara cu "și" pentru : intre cifre, deoarece e mai comun in texte generale.
+	# Daca doriti strict matematica, schimbati aici.
+	# text = re.sub(r'(?<=\d):(?=\d)', ' împărțit la ', text) 
+	# Pastram regula existenta: 12:30 -> 12 și 30
+	text = re.sub(r'(\d):(\d)', r'\1 și \2', text)
+	# Orice alt : devine virgula
 	text = text.replace(':', ', ')
+
+	# 3.6 Înmulțire
+	text = text.replace("×", " ori ")
+	text = text.replace("·", " ori ")
+	# * devine ori doar dacă nu a fost prins la N* (adica e între spații sau cifre)
+	text = text.replace("*", " ori ") 
+
+	# 3.7 Simboluri matematice diverse
+	math_mappings = {
+		"∅": " mulțimea vidă ",
+		"∞": " infinit ",
+		"±": " plus minus ",
+		"≤": " mai mic sau egal cu ",
+		"<=": " mai mic sau egal cu ",
+		"≥": " mai mare sau egal cu ",
+		">=": " mai mare sau egal cu ",
+		"≠": " diferit de ",
+		"≈": " aproximativ egal cu ",
+		"√": " radical din ",
+		"∈": " aparține ",
+		"∉": " nu aparține ",
+		"⊂": " inclus în ",
+		"⊃": " include ",
+		"∪": " reunit cu ",
+		"∩": " intersectat cu ",
+		"∀": " oricare ar fi ",
+		"∃": " există ",
+		"∑": " suma ",
+		"⇒": " rezultă că ",
+		"⇔": " echivalent cu ",
+		"=": " egal ", 
+		"<": " mai mic ca ",
+		">": " mai mare ca ",
+		"%": " la sută ",
+		"‰": " la mie "
+	}
+	for symbol, replacement in math_mappings.items():
+		text = text.replace(symbol, replacement)
+
+	# 3.8 Unități de măsură simple (doar dacă sunt precedate de numere)
+	units = {
+		"kg": "kilograme",
+		"g": "grame",
+		"mg": "miligrame",
+		"km": "kilometri",
+		"m": "metri", 
+		"cm": "centimetri",
+		"mm": "milimetri",
+		"l": "litri",
+		"ml": "mililitri",
+		"V": "volți",
+		"W": "wați",
+		"Hz": "herți",
+		"dB": "decibeli",
+		"A": "amperi"
+	}
+	for unit, expansion in units.items():
+		# Căutăm număr + spațiu opțional + unitate + word boundary
+		pattern = r'(\d+)\s*' + unit + r'\b'
+		text = re.sub(pattern, r'\1 ' + expansion, text)
+
+	# 3.9 Punctuație și Separatori (Paranteze, acolade, slash)
+	# Eliminăm parantezele neînchise corect transformându-le pe toate în virgule
+	text = re.sub(r'[(){}\[\]|]', ', ', text)
+	
+	# Slash-ul rămas (care nu e km/h)
+	text = text.replace("/", " supra ") 
+	text = text.replace("\\", " supra ")
+
+	# --- FINALIZARE ---
 
 	# 4. Inlocuire linii de pauza (en-dash, em-dash) cu virgula
 	# Atentie: nu inlocuim cratima (-) care leaga cuvinte (s-a, vis-à-vis)
 	text = text.replace('–', ', ').replace('—', ', ')
 
-	# 5. Inlocuire paranteze rotunde cu virgule
-	text = text.replace('(', ', ').replace(')', ', ')
-
-	# 6. Eliminare ghilimele si apostroafe
-	# Ghilimelele nu se aud. Apostroful se sterge pentru cursivitate (Feynman's -> Feynmans)
+	# 5. Eliminare ghilimele si apostroafe
 	chars_to_remove = ['”', '“', '„', '»', '«', '"', "'", "’"]
 	for c in chars_to_remove:
 		text = text.replace(c, '')
 
-	# 7. Gestionare initiale (J. M. Ziman -> J M Ziman)
-	# Eliminam punctul dupa litere mari singulare
+	# 6. Gestionare initiale (J. M. Ziman -> J M Ziman)
 	text = re.sub(r'\b([A-Z])\.', r'\1 ', text)
 
-	# 8. Expandare cifre romane (ex: XX-lea)
+	# 7. Expandare cifre romane (ex: XX-lea)
 	def replace_roman(match):
 		roman = match.group(1)
-		# suffix = match.group(2) # lea sau a
 		val = roman_to_int(roman)
 		if val == 0: return match.group(0)
 		try:
-			# num2words ordinal in ro returneaza "al X-lea"
 			words = num2words(val, lang='ro', to='ordinal')
 			return words
 		except:
 			return match.group(0)
 
-	# Cautam forme de genul XX-lea, XIX-lea, XII-a
 	text = re.sub(r'\b([IVXLCDM]+)-(lea|a)\b', replace_roman, text)
-	
-	# Curatam eventualele dubluri de "al al" create de num2words
 	text = text.replace('al al ', 'al ')
 	text = text.replace('a a ', 'a ')
 
-	# 9. Expandare numere folosind num2words
+	# 8. Expandare numere folosind num2words
 	def replace_num(match):
 		num_str = match.group(0)
 		try:
-			# Inlocuim virgula cu punct pentru parsing, daca e cazul
 			clean_num = num_str.replace(',', '.')
 			if '.' in clean_num:
 				val = float(clean_num)
@@ -230,11 +317,9 @@ def normalize_tts(text):
 		except:
 			return num_str
 
-	# Cautam numere (intregi sau cu zecimale)
 	text = re.sub(r'\b\d+([.,]\d+)?\b', replace_num, text)
 	
-	# 10. Curatenie finala punctuatie
-	# Inlocuim secvente de spatii si virgule
+	# 9. Curatenie finala punctuatie
 	text = re.sub(r'\s+', ' ', text)       # spatii multiple -> un spatiu
 	text = re.sub(r'\s+,', ',', text)      # spatiu inainte de virgula -> virgula
 	text = re.sub(r',+', ',', text)        # virgule multiple -> o virgula

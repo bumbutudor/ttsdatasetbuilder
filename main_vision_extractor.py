@@ -22,6 +22,37 @@ except ImportError:
 console = Console()
 
 
+def _next_wav_index_from_metadata(csv_path: str) -> int:
+    """Returnează următorul index numeric pentru numele wav din metadata.csv.
+
+    Compatibil cu formatul folosit de main_generate_csv.py / main_generator.py:
+    prima coloană este un nume de fișier de forma 000000000001.wav.
+    """
+    if not os.path.exists(csv_path):
+        return 0
+
+    max_idx = -1
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f, delimiter='|')
+            for row in reader:
+                if not row:
+                    continue
+                wav_name = (row[0] or '').strip()
+                if not wav_name.lower().endswith('.wav'):
+                    continue
+                # Extragem partea numerică dinainte de .wav
+                num_part = wav_name[:-4]
+                if not num_part.isdigit():
+                    continue
+                max_idx = max(max_idx, int(num_part))
+    except Exception:
+        # Dacă fișierul e corupt/alt format, nu blocăm execuția.
+        return 0
+
+    return max_idx + 1
+
+
 def _extract_model_names(models_response):
     """Returnează o listă de nume de modele din ollama.list(), compatibil cu mai multe versiuni."""
     # Versiuni mai noi: ListResponse(models=[Model(model='llava:latest', ...), ...])
@@ -241,11 +272,12 @@ def main():
         console.print("[red]Nu am găsit fișiere de procesat în 'texts'.[/red]")
         return
 
-    # Output CSV
+    # Output CSV (format compatibil main_generator.py: FARA HEADER)
     output_csv = os.path.join(project_folder, 'metadata.csv')
 
-    # Counter global pentru ID-uri tip .wav (ca în main_generate_csv.py)
-    valid_count = 0
+    # Counter global pentru ID-uri tip .wav (ca în main_generate_csv.py).
+    # Dacă metadata.csv există deja, continuăm numerotarea ca să evităm coliziuni.
+    valid_count = _next_wav_index_from_metadata(output_csv)
 
     # Temp folder (în proiect) - va fi șters la final
     temp_dir = os.path.join(project_folder, "temp_vision_processing")
@@ -316,13 +348,10 @@ def main():
 
                 progress.advance(task_pdf)
 
-    # Salvare CSV
+    # Salvare CSV (FARA header, ca să nu strice main_generator.py)
     if all_data:
-        file_exists = os.path.exists(output_csv)
         with open(output_csv, 'a', encoding='utf-8', newline='') as f:
             writer = csv.writer(f, delimiter='|')
-            if not file_exists:
-                writer.writerow(['ID', 'Text Brut', 'Text Normalizat'])
             writer.writerows(all_data)
 
         console.print(f"\n[bold green]Succes![/bold green] Au fost extrase {len(all_data)} segmente.")

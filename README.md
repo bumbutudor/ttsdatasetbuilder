@@ -1,70 +1,64 @@
-# TTS Dataset Creator
-This tool helps you to create datasets for text to speech tasks. It shows you single sentences that you read out loud. Your voice
-is recorded, trimmed and saved along with the sentence as text file in a specific folder.
-
-## Suport
-Writing software and training models takes time. I'd be happy if you support me on ko-fi.
-
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Y8Y11M25J7)
+# TTS & STT Dataset Creator
+This tool helps you to create datasets for Text-to-Speech (TTS) and Speech-to-Text (STT) tasks. It allows you to generate metadata from texts/PDFs, record your voice reading sentences, and normalize text for training models like Whisper or Tacotron.
 
 ## Installation
-Create a conda environment from the yml file
 
-- conda env create --file environment.yml
+### Using pip
+Install the required dependencies:
+```bash
+pip install -r requirements.txt
+python -m spacy download ro_core_news_lg
+```
 
 ## Usage
-There are 5 applications in this repository:
+There are 6 applications in this repository:
+main applications in this repository. Below is a guide on when and how to use each one.
 
-1. main_text_gen_gpt2.py - Use a gpt-2 model to generate readable texts
-2. main_text_gen_wiki.py - Download texts from wikipedia
-3. main_generate_csv.py - Collects texts from 1 and/or 2 and creates a metadata.csv file by splitting all texts in sentences and generate the according wav name.
-4. main_generator.py - Reads a metadata.csv, display sentence by sentence and records your reading.
-5. main_cleaner.py - Cleans a directory with wavs and a metadata.csv. All entries that have no wav file are deleted.
+### 1. main_generate_csv.py
+**Use when:** You have raw text files (`.txt`, `.pdf`) in the `texts` folder and want to create a dataset structure.
+**Description:**
+- Scans the `texts` folder.
+- Cleans and splits text into sentences using Spacy (Romanian).
+- Filters sentences based on length and structure (Strict for TTS, Relaxed for STT).
+- Generates a `metadata.csv` file in a new project folder.
 
+### 2. main_generator.py
+**Use when:** You want to record audio for the sentences in your `metadata.csv`.
+**Description:**
+- Reads `metadata.csv`.
+- Displays sentences one by one.
+- Records audio from your microphone.
+- Trims silence automatically (Strict for TTS, Relaxed for STT).
+- Saves `.wav` files.
+**Controls:** `n` (next), `d` (discard/retry), `e` (exit).
 
-### main_generator.py
-The console application guides you through the process.
+### 3. main_vision_extractor.py
+**Use when:** You have complex documents (manuals, textbooks with formulas) and want high-quality extraction using AI.
+**Description:**
+- Uses a Vision LLM (via Ollama) to "read" PDFs page-by-page.
+- Extracts text and normalizes it simultaneously.
+- **TTS Mode:** Expands math symbols, removes brackets, converts numbers to words.
+- **STT Mode:** Keeps numbers, standardizes quotes and punctuation.
+- **Prerequisites:** [Ollama](https://ollama.com/) running with the model specified in `vision_config.py`.
 
-1. Select the microphone you want to use for recording
-2. Select a folder where you want to store your samples.
-3. Select a language. The texts presented are in that given language. The application comes with English and German texts so far. Feel free to contribute. We support pdf and txt files.
-4. You will then see a text in magenta. Read it out loud. When done, press n (next) and the next sentence is shown. If you are not satisfied with your reading, press d (discard) and the text is repeaded. When you think you generated enough samples, press e (exit). You find the wav and txt files in the folder you specified in 2.
+### 4. main_cleanse_csv.py
+**Use when:** You have finished recording or manually deleted some bad audio files.
+**Description:**
+- Scans your project folder.
+- Checks if every entry in `metadata.csv` has a corresponding `.wav` file.
+- Removes entries where the audio is missing.
+- Ensures your dataset is clean and ready for training.
 
+### 5. main_normalize_text_STT.py
+**Use when:** You have a dataset and want to prepare the text for **Speech-to-Text (Whisper)** training.
+**Description:**
+- Reads `metadata.csv`.
+- Creates `metadata_normalized_stt.csv`.
+- **Rules:** Keeps numbers (digits), standardizes quotes („”), preserves punctuation, removes citations.
 
-### main_text_gen_wiki.py
-- python main_text_gen_wiki.py
-
-This tool collects texts from wikipedia for any language and stores those texts in the texts folder in the application directory.
-
-1. select a language (default de)
-2. select the number of articles to download (default 100, max is 500)
-3. select if the text should be normalized ($=>Dollar, 10=ten, 1.=first) and cleansed (an nlp model that is trained to repair sentences is applied, this is an experimental feature).
-
-### main_text_gen_gpt2.py
-GPT-2 is a pretrained language model that can be used to generate text.
-
-- python main_text_gen_gpt2.py
-
-This tool generates sentences of ~400 characters.
-
-1. select a langauge (default de)
-2. select the number of files to create (default 100)
-3. select if the text should be normalized ($=>Dollar, 10=ten, 1.=first)
-
-
-### main_generate_csv.py
-tbd
-
-### main_cleaner.py
-tbc
-
-## Contribute
-If you'd like to see a specific language to be supported feel free to create text files containing (royalty free) stories and create a pull request.
-
-Furthermore, I'd be super happy if you support me on pateron (https://www.patreon.com/padmalcom)
-
-## Text sources
-###German
-- https://deutschestextarchiv.de/download
-- https://german-nlp-group.github.io/projects/gc4-corpus.html#download
-- https://github.com/tblock/10kGNAD
+### 6. main_normalize_text_TTS.py
+**Use when:** You have a dataset and want to prepare the text for **Text-to-Speech** training.
+**Description:**
+- Reads `metadata.csv`.
+- Creates `metadata_normalized_tts.csv`.
+- **Rules:** Expands numbers to words, expands abbreviations (dl. -> domnul), expands math symbols (+ -> plus), removes bracket

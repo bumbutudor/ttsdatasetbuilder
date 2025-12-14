@@ -1,0 +1,11 @@
+rich
+spacy
+pyaudio
+keyboard
+librosa
+soundfile
+numpy
+num2words
+pymupdf
+ollama
+Pillow

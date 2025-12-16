@@ -2,10 +2,10 @@
 import os
 
 # Selectează providerul: "ollama" sau "openai"
-AI_PROVIDER = "ollama"
+AI_PROVIDER = "openai"
 
 # Configurare Ollama
-OLLAMA_MODEL_NAME = "qwen3-vl:235b-cloud"
+OLLAMA_MODEL_NAME = "gemma3:4b"
 
 # Configurare OpenAI
 OPENAI_MODEL_NAME = "gpt-5-mini"

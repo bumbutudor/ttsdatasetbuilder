@@ -47,23 +47,52 @@ def split_audio(audio_path, min_dur, max_dur, mode):
     Splits audio into chunks based on silence and duration constraints.
     Returns a list of (audio_data, sample_rate) tuples.
     """
+    # --- CONFIGURARE PARAMETRI (MODIFICĂ AICI) ---
+    # Durata minimă a pauzei (în secunde) pentru a considera o separare.
+    # Dacă pauza e mai mică de atât, bucățile vor fi unite (evită tăierea cuvintelor).
+    MIN_SILENCE_DURATION = 0.5
+    
+    # Durata de liniște adăugată la început și final (padding)
+    PAD_DURATION = 0.2 if mode == 'TTS' else 1
+    # ---------------------------------------------
+
     # Load with librosa (converts to float32 by default, which is fine for processing)
     y, sr = librosa.load(audio_path, sr=44100)
     
     # Detect non-silent intervals
     # top_db: The threshold (in decibels) below reference to consider as silence
     # Increased to 45/40 to avoid cutting words with dynamic volume (standard is 60, but videos might be noisy)
-    top_db = 45 if mode == 'TTS' else 40 
+    top_db = 45 if mode == 'TTS' else 30 
     intervals = librosa.effects.split(y, top_db=top_db)
     
+    # 1. Merge intervals that are too close (gap < MIN_SILENCE_DURATION)
+    merged_intervals = []
+    if len(intervals) > 0:
+        curr_start, curr_end = intervals[0]
+        for next_start, next_end in intervals[1:]:
+            silence_gap = (next_start - curr_end) / sr
+            if silence_gap < MIN_SILENCE_DURATION:
+                # Merge with previous
+                curr_end = next_end
+            else:
+                # Save current and start new
+                merged_intervals.append((curr_start, curr_end))
+                curr_start, curr_end = next_start, next_end
+        merged_intervals.append((curr_start, curr_end))
+    
     chunks = []
-    current_chunk = []
-    current_samples = 0
+    current_chunk_parts = []
+    current_len = 0
     
     min_samples = int(min_dur * sr)
     max_samples = int(max_dur * sr)
+    pad_samples = int(PAD_DURATION * sr)
     
-    for start, end in intervals:
+    # Small pause to insert between joined segments (if we join multiple phrases)
+    join_pause_samples = int(0.1 * sr) 
+    join_pause = np.zeros(join_pause_samples)
+    
+    for start, end in merged_intervals:
         segment = y[start:end]
         seg_len = len(segment)
         
@@ -72,31 +101,36 @@ def split_audio(audio_path, min_dur, max_dur, mode):
         if seg_len > max_samples:
             continue 
             
-        if current_samples + seg_len <= max_samples:
+        # Calculate potential length
+        added_len = seg_len
+        if current_chunk_parts:
+            added_len += join_pause_samples
+
+        if current_len + added_len <= max_samples:
             # Append to current chunk
-            # Add a small silence (0.1s) to separate words/phrases if merging
-            if len(current_chunk) > 0:
-                 pause_len = int(0.1 * sr)
-                 pause = np.zeros(pause_len)
-                 current_chunk.append(pause)
-                 current_samples += pause_len
+            if current_chunk_parts:
+                 current_chunk_parts.append(join_pause)
+                 current_len += join_pause_samples
             
-            current_chunk.append(segment)
-            current_samples += seg_len
+            current_chunk_parts.append(segment)
+            current_len += seg_len
         else:
             # Current chunk is full-ish. Check if it meets min duration
-            if current_samples >= min_samples:
-                full_chunk = np.concatenate(current_chunk)
-                chunks.append(full_chunk)
+            if current_len >= min_samples:
+                full_audio = np.concatenate(current_chunk_parts)
+                # Add padding at start/end
+                full_audio = np.pad(full_audio, (pad_samples, pad_samples), mode='constant')
+                chunks.append(full_audio)
             
             # Start new chunk with current segment
-            current_chunk = [segment]
-            current_samples = seg_len
+            current_chunk_parts = [segment]
+            current_len = seg_len
             
     # Last chunk
-    if current_samples >= min_samples and current_chunk:
-        full_chunk = np.concatenate(current_chunk)
-        chunks.append(full_chunk)
+    if current_chunk_parts and current_len >= min_samples:
+        full_audio = np.concatenate(current_chunk_parts)
+        full_audio = np.pad(full_audio, (pad_samples, pad_samples), mode='constant')
+        chunks.append(full_audio)
         
     return chunks, sr
 

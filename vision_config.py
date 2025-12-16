@@ -1,8 +1,18 @@
-# Configurare pentru Modelul Vision (Ollama)
-
-MODEL_NAME = "qwen3-vl:235b-cloud" 
-
+# Configurare pentru Modelul Vision (Ollama sau OpenAI)
 import os
+
+# Selectează providerul: "ollama" sau "openai"
+AI_PROVIDER = "ollama"
+
+# Configurare Ollama
+OLLAMA_MODEL_NAME = "qwen3-vl:235b-cloud"
+
+# Configurare OpenAI
+OPENAI_MODEL_NAME = "gpt-5-mini"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+# Păstrăm MODEL_NAME pentru compatibilitate (va fi setat dinamic în main sau folosit cel de Ollama ca default)
+MODEL_NAME = OLLAMA_MODEL_NAME if AI_PROVIDER == "ollama" else OPENAI_MODEL_NAME
 
 
 def _load_prompt_file(filename: str, fallback: str) -> str:

@@ -8,4 +8,5 @@ numpy
 num2words
 pymupdf
 ollama
+openai
 Pillow

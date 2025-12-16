@@ -11,13 +11,23 @@ from rich.panel import Panel
 from rich.prompt import IntPrompt
 import vision_config as config
 
-# Încercăm să importăm ollama
+# Încercăm să importăm librăriile necesare
 try:
     import ollama
 except ImportError:
-    print("Eroare: Librăria 'ollama' nu este instalată.")
-    print("Te rog rulează: pip install ollama")
-    sys.exit(1)
+    if config.AI_PROVIDER == "ollama":
+        print("Eroare: Librăria 'ollama' nu este instalată.")
+        print("Te rog rulează: pip install ollama")
+        sys.exit(1)
+
+try:
+    from openai import OpenAI
+    import base64
+except ImportError:
+    if config.AI_PROVIDER == "openai":
+        print("Eroare: Librăria 'openai' nu este instalată.")
+        print("Te rog rulează: pip install openai")
+        sys.exit(1)
 
 console = Console()
 
@@ -127,6 +137,18 @@ def check_ollama_connection():
         console.print(f"[red]Eroare conectare Ollama: {e}[/red]")
         console.print("Asigură-te că aplicația Ollama rulează.")
         return False
+
+def check_openai_connection():
+    """Verifică dacă avem API Key pentru OpenAI."""
+    if not config.OPENAI_API_KEY:
+        console.print("[red]Eroare: OPENAI_API_KEY nu este setat în vision_config.py sau environment.[/red]")
+        return False
+    return True
+
+def check_ai_connection():
+    if config.AI_PROVIDER == "openai":
+        return check_openai_connection()
+    return check_ollama_connection()
 
 def pdf_to_images(pdf_path, temp_dir="temp_pages"):
     """Convertește paginile PDF în imagini PNG temporare."""
@@ -256,6 +278,87 @@ def process_text_with_ollama(text_chunk, mode):
         console.print(f"[red]Eroare procesare AI (text): {e}[/red]")
         return ""
 
+def _encode_image_to_base64(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+def process_image_with_openai(image_path, mode):
+    """Trimite imaginea la OpenAI și primește CSV-ul."""
+    system_prompt = config.SYSTEM_PROMPT_TTS if mode == "TTS" else config.SYSTEM_PROMPT_STT
+    
+    user_message = (
+        "Analizează această imagine (o pagină) și extrage TOT textul relevant. "
+        "Împarte în propoziții/segmente: o propoziție pe linie. "
+        "Returnează DOAR liniile CSV în format: TextBrut|TextNormalizat (2 coloane). "
+        "NU include titluri sau markdown. "
+        "NU folosi caracterul | în interiorul textului (doar ca separator între cele 2 coloane)."
+    )
+
+    try:
+        client = OpenAI(api_key=config.OPENAI_API_KEY)
+        base64_image = _encode_image_to_base64(image_path)
+
+        response = client.chat.completions.create(
+            model=config.OPENAI_MODEL_NAME,
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_message},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            },
+                        },
+                    ],
+                }
+            ],
+            max_tokens=4096,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        console.print(f"[red]Eroare procesare OpenAI pentru {image_path}: {e}[/red]")
+        return ""
+
+def process_text_with_openai(text_chunk, mode):
+    """Trimite text la OpenAI și primește CSV-ul."""
+    system_prompt = config.SYSTEM_PROMPT_TTS if mode == "TTS" else config.SYSTEM_PROMPT_STT
+
+    user_message = (
+        "Împarte textul următor în segmente potrivite conform regulilor din System Prompt și "
+        "returnează doar liniile CSV în format: TextBrut|TextNormalizat (2 coloane).\n\nTEXT:\n"
+        + text_chunk
+    )
+
+    try:
+        client = OpenAI(api_key=config.OPENAI_API_KEY)
+        response = client.chat.completions.create(
+            model=config.OPENAI_MODEL_NAME,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        console.print(f"[red]Eroare procesare OpenAI (text): {e}[/red]")
+        return ""
+
+def process_image(image_path, mode):
+    if config.AI_PROVIDER == "openai":
+        return process_image_with_openai(image_path, mode)
+    return process_image_with_ollama(image_path, mode)
+
+def process_text(text_chunk, mode):
+    if config.AI_PROVIDER == "openai":
+        return process_text_with_openai(text_chunk, mode)
+    return process_text_with_ollama(text_chunk, mode)
+
 def parse_ai_response(response_text, filename_prefix):
     """Curăță răspunsul AI și extrage liniile valide CSV."""
     lines = response_text.strip().split('\n')
@@ -285,9 +388,9 @@ def parse_ai_response(response_text, filename_prefix):
     return valid_rows
 
 def main():
-    console.print(Panel.fit("[bold green]AI Vision Dataset Builder[/bold green]\nExtragere și Normalizare simultană folosind Ollama"))
+    console.print(Panel.fit(f"[bold green]AI Vision Dataset Builder[/bold green]\nExtragere și Normalizare simultană folosind {config.AI_PROVIDER.upper()}"))
 
-    if not check_ollama_connection():
+    if not check_ai_connection():
         return
 
     # UX identic cu main_generate_csv.py
@@ -420,7 +523,7 @@ def main():
                             task_txt,
                             description=f"[blue]TXT ({mode})[/blue]: {os.path.basename(tf)} [{start//chunk_size + 1}]",
                         )
-                        resp = process_text_with_ollama(chunk, mode)
+                        resp = process_text(chunk, mode)
                         rows = parse_ai_response(resp, os.path.basename(tf))
 
                         # Scriere incrementală (real-time)
@@ -458,7 +561,7 @@ def main():
                             task_pdf,
                             description=f"[green]PDF ({mode})[/green]: {os.path.basename(pdf_path)} | page {page_num + 1}",
                         )
-                        response_text = process_image_with_ollama(img_path, mode)
+                        response_text = process_image(img_path, mode)
                         rows = parse_ai_response(response_text, os.path.basename(img_path))
 
                         # Scriere incrementală imediat după fiecare pagină procesată

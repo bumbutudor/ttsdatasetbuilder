@@ -10,8 +10,17 @@ import soundfile as sf
 import librosa
 import csv
 import shutil
+import stt_config
 
 # Try imports
+try:
+    from transformers import WhisperProcessor, WhisperForConditionalGeneration
+    import torch
+except ImportError:
+    WhisperProcessor = None
+    WhisperForConditionalGeneration = None
+    torch = None
+
 try:
     # Try importing from moviepy.editor (v1.x)
     from moviepy.editor import VideoFileClip
@@ -53,7 +62,7 @@ def split_audio(audio_path, min_dur, max_dur, mode):
     MIN_SILENCE_DURATION = 0.5
     
     # Durata de liniște adăugată la început și final (padding)
-    PAD_DURATION = 0.2 if mode == 'TTS' else 1
+    PAD_DURATION = 0.2 if mode == 'TTS' else 0.5
     # ---------------------------------------------
 
     # Load with librosa (converts to float32 by default, which is fine for processing)
@@ -196,18 +205,48 @@ if __name__ == '__main__':
     console.print(f"Project folder is [yellow]{project_folder}[/yellow]")
     
     # 3. Load Whisper Model
-    model_path = os.path.join(app_folder, "models", "ggml-whisper-medium-romanian.bin")
-    if not os.path.exists(model_path):
-        console.print(f"[red]Model not found at {model_path}[/red]")
-        console.print("Please ensure the model file exists.")
-        sys.exit(1)
+    whisper_model = None
+    hf_processor = None
+    hf_model = None
+    device = None
+
+    if stt_config.MODEL_SOURCE == 'ggml':
+        model_path = os.path.join(app_folder, "models", stt_config.MODEL_NAME)
+        if not os.path.exists(model_path):
+            console.print(f"[red]Model not found at {model_path}[/red]")
+            console.print("Please ensure the model file exists.")
+            sys.exit(1)
+            
+        console.print(f"Loading GGML Whisper model from [cyan]{model_path}[/cyan]...")
+        if Model is None:
+             console.print("[red]pywhispercpp is not installed![/red]")
+             sys.exit(1)
+        try:
+            # n_threads can be adjusted. 
+            whisper_model = Model(model_path, n_threads=6, print_realtime=False, print_progress=False)
+        except Exception as e:
+            console.print(f"[red]Failed to load model: {e}[/red]")
+            sys.exit(1)
+            
+    elif stt_config.MODEL_SOURCE == 'huggingface':
+        model_name = stt_config.MODEL_NAME
+        console.print(f"Loading HuggingFace Whisper model: [cyan]{model_name}[/cyan]...")
         
-    console.print(f"Loading Whisper model from [cyan]{model_path}[/cyan]...")
-    try:
-        # n_threads can be adjusted. 
-        whisper_model = Model(model_path, n_threads=6, print_realtime=False, print_progress=False)
-    except Exception as e:
-        console.print(f"[red]Failed to load model: {e}[/red]")
+        if WhisperProcessor is None or torch is None:
+             console.print("[red]transformers or torch is not installed! Please install them.[/red]")
+             sys.exit(1)
+             
+        try:
+            hf_processor = WhisperProcessor.from_pretrained(model_name)
+            hf_model = WhisperForConditionalGeneration.from_pretrained(model_name)
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            hf_model.to(device)
+            console.print(f"Model loaded on [green]{device}[/green]")
+        except Exception as e:
+            console.print(f"[red]Failed to load HuggingFace model: {e}[/red]")
+            sys.exit(1)
+    else:
+        console.print(f"[red]Unknown MODEL_SOURCE in config: {stt_config.MODEL_SOURCE}[/red]")
         sys.exit(1)
         
     # 4. Scan Videos
@@ -258,17 +297,29 @@ if __name__ == '__main__':
                 # Resample to 16k for Whisper
                 # librosa.resample expects float input, chunk_data is likely float from librosa.load
                 chunk_16k = librosa.resample(chunk_data, orig_sr=sr, target_sr=16000)
-                temp_16k_path = os.path.join(project_folder, "temp_16k.wav")
-                sf.write(temp_16k_path, chunk_16k, 16000, subtype='PCM_16')
-
-                # pywhispercpp transcribe takes file path
-                # Force Romanian language
-                segments = whisper_model.transcribe(temp_16k_path, language='ro')
                 
-                # Cleanup temp 16k file
-                if os.path.exists(temp_16k_path):
-                    os.remove(temp_16k_path)
-                text = "".join([s.text for s in segments])
+                text = ""
+                
+                if stt_config.MODEL_SOURCE == 'ggml':
+                    temp_16k_path = os.path.join(project_folder, "temp_16k.wav")
+                    sf.write(temp_16k_path, chunk_16k, 16000, subtype='PCM_16')
+
+                    # pywhispercpp transcribe takes file path
+                    # Force Romanian language
+                    segments = whisper_model.transcribe(temp_16k_path, language='ro')
+                    
+                    # Cleanup temp 16k file
+                    if os.path.exists(temp_16k_path):
+                        os.remove(temp_16k_path)
+                    text = "".join([s.text for s in segments])
+                    
+                elif stt_config.MODEL_SOURCE == 'huggingface':
+                    # HF model takes numpy array directly
+                    input_features = hf_processor(chunk_16k, sampling_rate=16000, return_tensors="pt").input_features.to(device)
+                    predicted_ids = hf_model.generate(input_features, language="ro")
+                    transcription = hf_processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+                    text = transcription
+
                 text = clean_text(text)
                 
                 if not text or len(text) < 2:

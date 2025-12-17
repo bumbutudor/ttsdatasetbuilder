@@ -10,3 +10,7 @@ pymupdf
 ollama
 openai
 Pillow
+transformers
+torch
+torchaudio
+accelerate

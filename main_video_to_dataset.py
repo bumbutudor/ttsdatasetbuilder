@@ -316,7 +316,8 @@ if __name__ == '__main__':
                 elif stt_config.MODEL_SOURCE == 'huggingface':
                     # HF model takes numpy array directly
                     input_features = hf_processor(chunk_16k, sampling_rate=16000, return_tensors="pt").input_features.to(device)
-                    predicted_ids = hf_model.generate(input_features, language="ro")
+                    # Force language to Romanian and task to transcribe
+                    predicted_ids = hf_model.generate(input_features, language="ro", task="transcribe")
                     transcription = hf_processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
                     text = transcription
 

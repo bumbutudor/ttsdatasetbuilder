@@ -23,13 +23,14 @@ def process_spacy_task(
     job_id: int,
     file_paths: List[str],
     project_id: int,
+    project_folder: str,
     settings: dict,
     db_url: str
 ):
     """Background task for Spacy text extraction."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
-    from app.services.document_processor import process_documents_to_csv
+    import os
     
     engine = create_engine(db_url)
     SessionLocal = sessionmaker(bind=engine)
@@ -44,16 +45,23 @@ def process_spacy_task(
         
         job.status = ProjectStatus.PROCESSING
         job.started_at = datetime.utcnow()
+        job.message = "Starting text extraction..."
         db.commit()
+        
+        # Ensure folder exists
+        os.makedirs(project_folder, exist_ok=True)
         
         def progress_callback(progress: int, message: str):
             job.progress = progress
             job.message = message
             db.commit()
         
+        # Import here to avoid circular imports
+        from app.services.document_processor import process_documents_to_csv
+        
         valid_count, csv_path = process_documents_to_csv(
             file_paths,
-            project.folder_path,
+            project_folder,
             project.dataset_type.value,
             progress_callback,
             min_len=settings.get('min_sentence_length', 30),
@@ -61,17 +69,48 @@ def process_spacy_task(
             min_words=settings.get('min_words', 5)
         )
         
-        project.total_entries = valid_count
+        # Load entries from CSV into database
+        job.message = "Saving entries to database..."
+        db.commit()
+        
+        import csv as csv_module
+        from app.models import DatasetEntry
+        
+        # Clear existing entries for this project
+        db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).delete()
+        db.commit()
+        
+        # Read CSV and insert entries
+        entries_added = 0
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = csv_module.reader(f, delimiter='|')
+            for row in reader:
+                if len(row) >= 2:
+                    entry = DatasetEntry(
+                        project_id=project_id,
+                        wav_filename=row[0],
+                        original_text=row[1],
+                        normalized_text=row[2] if len(row) > 2 else row[1],
+                        has_audio=False
+                    )
+                    db.add(entry)
+                    entries_added += 1
+        
+        db.commit()
+        
+        project.total_entries = entries_added
         
         job.status = ProjectStatus.COMPLETED
         job.progress = 100
         job.completed_at = datetime.utcnow()
-        job.message = f"Extracted {valid_count} sentences"
+        job.message = f"Extracted {entries_added} sentences and saved to database"
         db.commit()
         
     except Exception as e:
+        import traceback
+        error_detail = f"{str(e)}\n{traceback.format_exc()}"
         job.status = ProjectStatus.FAILED
-        job.error_message = str(e)
+        job.error_message = error_detail[:1000]  # Limit error message length
         job.completed_at = datetime.utcnow()
         db.commit()
     finally:
@@ -82,13 +121,14 @@ def process_vision_task(
     job_id: int,
     file_paths: List[str],
     project_id: int,
+    project_folder: str,
     settings: dict,
     db_url: str
 ):
     """Background task for Vision LLM extraction."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
-    from app.services.vision_processor import process_pdf_with_vision
+    import os
     
     engine = create_engine(db_url)
     SessionLocal = sessionmaker(bind=engine)
@@ -103,7 +143,14 @@ def process_vision_task(
         
         job.status = ProjectStatus.PROCESSING
         job.started_at = datetime.utcnow()
+        job.message = "Starting Vision LLM extraction..."
         db.commit()
+        
+        # Ensure folder exists
+        os.makedirs(project_folder, exist_ok=True)
+        
+        # Import here to avoid circular imports
+        from app.services.vision_processor import process_pdf_with_vision
         
         total_valid = 0
         
@@ -116,7 +163,7 @@ def process_vision_task(
             
             valid_count, csv_path = process_pdf_with_vision(
                 pdf_path,
-                project.folder_path,
+                project_folder,
                 project.dataset_type.value,
                 progress_callback,
                 provider=settings.get('ai_provider', 'ollama'),
@@ -124,6 +171,39 @@ def process_vision_task(
                 api_key=settings.get('openai_api_key')
             )
             total_valid += valid_count
+        
+        # Load entries from CSV into database
+        job.message = "Saving entries to database..."
+        db.commit()
+        
+        import csv as csv_module
+        from app.models import DatasetEntry
+        
+        csv_path = os.path.join(project_folder, 'metadata.csv')
+        
+        if os.path.exists(csv_path):
+            # Clear existing entries for this project
+            db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).delete()
+            db.commit()
+            
+            # Read CSV and insert entries
+            entries_added = 0
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv_module.reader(f, delimiter='|')
+                for row in reader:
+                    if len(row) >= 2:
+                        entry = DatasetEntry(
+                            project_id=project_id,
+                            wav_filename=row[0],
+                            original_text=row[1],
+                            normalized_text=row[2] if len(row) > 2 else row[1],
+                            has_audio=False
+                        )
+                        db.add(entry)
+                        entries_added += 1
+            
+            db.commit()
+            total_valid = entries_added
         
         project.total_entries = total_valid
         
@@ -134,8 +214,10 @@ def process_vision_task(
         db.commit()
         
     except Exception as e:
+        import traceback
+        error_detail = f"{str(e)}\n{traceback.format_exc()}"
         job.status = ProjectStatus.FAILED
-        job.error_message = str(e)
+        job.error_message = error_detail[:1000]
         job.completed_at = datetime.utcnow()
         db.commit()
     finally:
@@ -151,6 +233,9 @@ async def generate_csv(
     db: Session = Depends(get_db)
 ):
     """Start CSV generation from uploaded files."""
+    from app.models import ProjectSettings
+    from app.config import PROJECTS_DIR
+    
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id
@@ -161,6 +246,15 @@ async def generate_csv(
     
     if not request.files:
         raise HTTPException(status_code=400, detail="No files selected")
+    
+    # Ensure project folder exists
+    if not project.folder_path:
+        from datetime import datetime
+        folder_name = f"project_{project.dataset_type.value}_{project.id}_{datetime.now().strftime('%Y%m%d')}"
+        folder_path = PROJECTS_DIR / folder_name
+        folder_path.mkdir(parents=True, exist_ok=True)
+        project.folder_path = str(folder_path)
+        db.commit()
     
     # Build full paths
     upload_folder = UPLOAD_DIR / f"project_{project_id}"
@@ -173,12 +267,18 @@ async def generate_csv(
     if not file_paths:
         raise HTTPException(status_code=400, detail="No valid files found")
     
-    # Get settings
-    from app.models import ProjectSettings
+    # Get settings or use defaults
     settings_obj = db.query(ProjectSettings).filter(
         ProjectSettings.project_id == project_id
     ).first()
-    settings = settings_obj.to_dict() if settings_obj else {}
+    settings = settings_obj.to_dict() if settings_obj else {
+        'min_sentence_length': 30,
+        'max_sentence_length': 100,
+        'min_words': 5,
+        'ai_provider': 'ollama',
+        'ollama_model': 'gemma3:4b',
+        'openai_model': 'gpt-4o-mini'
+    }
     
     # Create job
     job_type = 'vision' if request.method == 'vision' else 'spacy'
@@ -200,11 +300,11 @@ async def generate_csv(
         if not pdf_paths:
             raise HTTPException(status_code=400, detail="Vision mode requires PDF files")
         background_tasks.add_task(
-            process_vision_task, job.id, pdf_paths, project_id, settings, DATABASE_URL
+            process_vision_task, job.id, pdf_paths, project_id, project.folder_path, settings, DATABASE_URL
         )
     else:
         background_tasks.add_task(
-            process_spacy_task, job.id, file_paths, project_id, settings, DATABASE_URL
+            process_spacy_task, job.id, file_paths, project_id, project.folder_path, settings, DATABASE_URL
         )
     
     return {

@@ -169,5 +169,47 @@
         </form>
     </div>
 </div>
+
+<script>
+// Create project function available in all pages with sidebar
+async function createProject(event) {
+    event.preventDefault();
+    
+    const form = event.target;
+    const button = form.querySelector('button[type="submit"]');
+    const stopLoading = ui.showLoading(button);
+    
+    try {
+        const response = await api.post('/api/projects', {
+            name: form.name.value,
+            description: form.description.value,
+            dataset_type: form.dataset_type.value
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to create project');
+        }
+        
+        const project = await response.json();
+        ui.hideModal('create-project-modal');
+        ui.showAlert('Project created successfully!');
+        
+        // Select the new project
+        localStorage.setItem('currentProjectId', project.id);
+        
+        // Refresh project selector
+        loadProjectSelector();
+        
+        // Navigate to files page
+        window.location.href = '/files';
+        
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+    } finally {
+        stopLoading();
+    }
+}
+</script>
 {% endblock %}
 

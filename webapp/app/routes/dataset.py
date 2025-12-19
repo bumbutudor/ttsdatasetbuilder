@@ -125,6 +125,64 @@ async def get_audio(
     )
 
 
+@router.post("/{project_id}/reload")
+async def reload_from_csv(
+    project_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Reload dataset entries from metadata.csv file."""
+    import csv
+    
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    if not project.folder_path:
+        raise HTTPException(status_code=400, detail="No project folder")
+    
+    csv_path = Path(project.folder_path) / 'metadata.csv'
+    
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="metadata.csv not found")
+    
+    # Clear existing entries
+    db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).delete()
+    db.commit()
+    
+    # Read CSV and insert entries
+    entries_added = 0
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        reader = csv.reader(f, delimiter='|')
+        for row in reader:
+            if len(row) >= 2:
+                audio_path = Path(project.folder_path) / row[0]
+                entry = DatasetEntry(
+                    project_id=project_id,
+                    wav_filename=row[0],
+                    original_text=row[1],
+                    normalized_text=row[2] if len(row) > 2 else row[1],
+                    has_audio=audio_path.exists()
+                )
+                db.add(entry)
+                entries_added += 1
+    
+    db.commit()
+    
+    # Update project stats
+    project.total_entries = entries_added
+    db.commit()
+    
+    return {
+        "message": f"Loaded {entries_added} entries from CSV",
+        "entries_loaded": entries_added
+    }
+
+
 @router.delete("/{project_id}/entry/{entry_id}")
 async def delete_entry(
     project_id: int,

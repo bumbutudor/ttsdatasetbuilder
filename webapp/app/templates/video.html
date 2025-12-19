@@ -50,13 +50,13 @@
         </div>
     </div>
     <div class="form-group">
-        <label class="form-label">Silence Detection Threshold (dB)</label>
+        <label class="form-label">Silence Detection Threshold: <strong id="threshold-value" style="color: var(--color-accent); font-size: 1.1em;">45 dB</strong></label>
         <input type="range" id="silence-threshold" class="form-control" value="45" min="20" max="60" step="5" 
+               style="width: 100%; height: 8px; cursor: pointer;"
                oninput="document.getElementById('threshold-value').textContent = this.value + ' dB'">
         <div class="flex flex-between text-small text-muted mt-sm">
-            <span>More sensitive (20)</span>
-            <span id="threshold-value">45 dB</span>
-            <span>Less sensitive (60)</span>
+            <span>More sensitive (20 dB)</span>
+            <span>Less sensitive (60 dB)</span>
         </div>
         <small class="text-muted">Lower values detect quieter sounds as non-silence (may avoid cutting words).</small>
     </div>

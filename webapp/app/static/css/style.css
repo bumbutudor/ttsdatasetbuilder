@@ -198,6 +198,10 @@ body {
     padding: var(--space-md) var(--space-lg);
     border-top: 1px solid rgba(255, 255, 255, 0.06);
     margin-top: auto;
+    flex-shrink: 0;
+    background: var(--sidebar-bg);
+    position: sticky;
+    bottom: 0;
 }
 
 /* ============== Main Content ============== */
@@ -620,6 +624,59 @@ tr:hover {
     color: var(--color-accent);
     font-size: 0.75rem;
     margin-left: var(--space-sm);
+}
+
+/* Full text display in tables */
+.table-full-text td {
+    white-space: normal;
+    word-break: break-word;
+}
+
+.text-wrap {
+    white-space: normal !important;
+    word-break: break-word;
+    max-width: none !important;
+}
+
+/* Range slider styling */
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 8px;
+    background: var(--color-bg-tertiary);
+    border-radius: 4px;
+    outline: none;
+    cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    cursor: pointer;
+    border: 2px solid var(--color-bg-primary);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+input[type="range"]::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    cursor: pointer;
+    border: 2px solid var(--color-bg-primary);
+}
+
+input[type="range"]:hover::-webkit-slider-thumb {
+    transform: scale(1.1);
+}
+
+input[type="range"]:focus::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.3);
 }
 
 /* ============== Modal ============== */

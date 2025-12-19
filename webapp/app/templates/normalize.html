@@ -59,18 +59,10 @@
 <div class="card">
     <div class="card-header">
         <h3>Dataset Preview</h3>
-        <div class="flex gap-md">
-            <select id="preview-source" class="form-control" style="width: auto;" onchange="loadDatasetPreview()">
-                <option value="original">Original Text</option>
-                <option value="normalized_tts">Normalized (TTS)</option>
-                <option value="normalized_stt">Normalized (STT)</option>
-            </select>
-            <button class="btn btn-sm btn-secondary" onclick="loadDatasetPreview()">Refresh</button>
-        </div>
     </div>
     
     <div class="table-container">
-        <table>
+        <table class="table-full-text">
             <thead>
                 <tr>
                     <th style="width: 120px;">Filename</th>
@@ -188,11 +180,10 @@ async function loadDatasetPreview() {
     const projectId = getCurrentProjectId();
     if (!projectId) return;
     
-    const source = document.getElementById('preview-source').value;
     const tbody = document.getElementById('dataset-preview');
     
     try {
-        const response = await api.get(`/api/dataset/${projectId}?page=${currentPage}&per_page=${perPage}&source=${source}`);
+        const response = await api.get(`/api/dataset/${projectId}?page=${currentPage}&per_page=${perPage}`);
         if (!response.ok) throw new Error('Failed to load dataset');
         
         const data = await response.json();
@@ -217,8 +208,8 @@ async function loadDatasetPreview() {
         tbody.innerHTML = data.entries.map(entry => `
             <tr>
                 <td><code>${entry.wav_filename}</code></td>
-                <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(entry.original_text)}</td>
-                <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(entry.normalized_text || '-')}</td>
+                <td class="text-wrap">${escapeHtml(entry.original_text)}</td>
+                <td class="text-wrap">${escapeHtml(entry.normalized_text || '-')}</td>
             </tr>
         `).join('');
     } catch (error) {

@@ -8,7 +8,7 @@
     <div class="flex flex-between items-center">
         <div>
             <h1>📊 View Dataset</h1>
-            <p>Browse and manage your dataset entries.</p>
+            <p>Browse and manage your dataset entries. Entries without audio need to be recorded in <a href="/recorder" style="color: var(--color-accent);">Voice Recorder</a>.</p>
         </div>
         <div class="flex gap-md">
             <button class="btn btn-secondary" onclick="reloadFromCSV()">
@@ -225,7 +225,9 @@ async function loadDataset() {
         tbody.innerHTML = data.entries.map(entry => `
             <tr>
                 <td class="text-center">
-                    <button class="btn btn-sm btn-secondary" onclick="playAudio('${entry.wav_filename}')">▶ Play</button>
+                    ${entry.has_audio 
+                        ? `<button class="btn btn-sm btn-primary" onclick="playAudio('${entry.wav_filename}')">▶ Play</button>`
+                        : `<span class="badge badge-pending" title="No audio yet - record in Voice Recorder">No audio</span>`}
                 </td>
                 <td><code>${entry.wav_filename}</code></td>
                 <td class="text-wrap">${escapeHtml(entry.original_text)}</td>

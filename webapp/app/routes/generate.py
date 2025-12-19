@@ -142,6 +142,10 @@ def process_vision_task(
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     import os
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting Vision task job_id={job_id}, project_id={project_id}")
     
     engine = create_engine(db_url)
     SessionLocal = sessionmaker(bind=engine)
@@ -152,7 +156,10 @@ def process_vision_task(
         project = db.query(Project).filter(Project.id == project_id).first()
         
         if not job or not project:
+            logger.error(f"Job or project not found: job={job}, project={project}")
             return
+        
+        logger.info(f"Processing {len(file_paths)} files for project folder: {project_folder}")
         
         job.status = ProjectStatus.PROCESSING
         job.started_at = datetime.utcnow()
@@ -193,19 +200,27 @@ def process_vision_task(
         from app.models import DatasetEntry
         
         csv_path = os.path.join(project_folder, 'metadata.csv')
+        logger.info(f"Looking for CSV at: {csv_path}")
+        
+        entries_added = 0
         
         if os.path.exists(csv_path):
+            logger.info(f"CSV found, reading entries...")
+            
             # Get existing wav_filenames to avoid duplicates
-            existing_filenames = set(
-                entry.wav_filename for entry in 
-                db.query(DatasetEntry.wav_filename).filter(DatasetEntry.project_id == project_id).all()
-            )
+            existing_entries = db.query(DatasetEntry.wav_filename).filter(
+                DatasetEntry.project_id == project_id
+            ).all()
+            existing_filenames = set(e.wav_filename for e in existing_entries)
+            logger.info(f"Found {len(existing_filenames)} existing entries in DB")
             
             # Read CSV and insert only NEW entries
-            entries_added = 0
             with open(csv_path, 'r', encoding='utf-8') as f:
                 reader = csv_module.reader(f, delimiter='|')
-                for row in reader:
+                rows = list(reader)
+                logger.info(f"CSV has {len(rows)} rows")
+                
+                for row in rows:
                     if len(row) >= 2:
                         wav_filename = row[0]
                         # Skip if already in database
@@ -226,11 +241,16 @@ def process_vision_task(
                         db.add(entry)
                         entries_added += 1
             
+            logger.info(f"Added {entries_added} new entries to DB")
             db.commit()
+            logger.info("DB committed successfully")
+        else:
+            logger.error(f"CSV not found at {csv_path}")
         
         # Update project total count
         total_entries = db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).count()
         project.total_entries = total_entries
+        logger.info(f"Total entries in project: {total_entries}")
         
         job.status = ProjectStatus.COMPLETED
         job.progress = 100

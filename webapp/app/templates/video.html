@@ -16,12 +16,12 @@
         <div class="form-group">
             <label class="form-label">Whisper Model</label>
             <select id="whisper-model" class="form-control">
-                <option value="iRaduS/whisper-romanian-finetune">iRaduS/whisper-romanian-finetune (Recommended)</option>
-                <option value="TransferRapid/whisper-large-v3-turbo_ro">TransferRapid/whisper-large-v3-turbo_ro</option>
-                <option value="gigant/whisper-medium-romanian">gigant/whisper-medium-romanian</option>
-                <option value="readerbench/whisper-ro">readerbench/whisper-ro</option>
+                <option value="">Loading models...</option>
             </select>
-            <small class="text-muted">HuggingFace Transformers model for Romanian speech recognition</small>
+            <small class="text-muted">
+                ⚡ <strong>GGML models</strong> (local .bin files) are much faster on CPU. 
+                Place them in the <code>models/</code> folder.
+            </small>
         </div>
         <div class="form-group">
             <label class="form-label">Segment Duration</label>
@@ -135,8 +135,53 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     loadProjectSelector();
-    loadSettings();
+    loadWhisperModels();
 });
+
+async function loadWhisperModels() {
+    const select = document.getElementById('whisper-model');
+    
+    try {
+        const response = await api.get('/api/settings/whisper-models');
+        if (!response.ok) throw new Error('Failed to load models');
+        
+        const data = await response.json();
+        const models = data.models;
+        
+        // Group models by type
+        const ggmlModels = models.filter(m => m.type === 'ggml');
+        const hfModels = models.filter(m => m.type === 'huggingface');
+        
+        let html = '';
+        
+        // GGML models first (faster)
+        if (ggmlModels.length > 0) {
+            html += '<optgroup label="⚡ Local GGML Models (Fast)">';
+            ggmlModels.forEach(m => {
+                html += `<option value="${m.name}">${m.label} - ${m.size}</option>`;
+            });
+            html += '</optgroup>';
+        }
+        
+        // HuggingFace models
+        html += '<optgroup label="🤗 HuggingFace Models (Slower on CPU)">';
+        hfModels.forEach(m => {
+            html += `<option value="${m.name}">${m.label}</option>`;
+        });
+        html += '</optgroup>';
+        
+        select.innerHTML = html;
+        
+        // Now load settings to set the selected model
+        loadSettings();
+    } catch (error) {
+        console.error('Error loading Whisper models:', error);
+        select.innerHTML = `
+            <option value="iRaduS/whisper-romanian-finetune">iRaduS/whisper-romanian-finetune (Default)</option>
+        `;
+        loadSettings();
+    }
+}
 
 async function loadSettings() {
     const projectId = getCurrentProjectId();
@@ -149,7 +194,12 @@ async function loadSettings() {
         const settings = await response.json();
         
         if (settings.whisper_model) {
-            document.getElementById('whisper-model').value = settings.whisper_model;
+            const select = document.getElementById('whisper-model');
+            // Check if the option exists
+            const optionExists = Array.from(select.options).some(opt => opt.value === settings.whisper_model);
+            if (optionExists) {
+                select.value = settings.whisper_model;
+            }
         }
         if (settings.min_segment_duration) {
             document.getElementById('min-duration').value = settings.min_segment_duration;

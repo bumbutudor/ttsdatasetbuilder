@@ -1,7 +1,12 @@
-"""Video processing service - extract audio, split, and transcribe."""
+"""Video processing service - extract audio, split, and transcribe.
+
+Supports both HuggingFace models and GGML models (pywhispercpp) for faster processing.
+GGML models are recommended for CPU-only systems as they are much faster.
+"""
 import os
 import csv
 import tempfile
+import logging
 from pathlib import Path
 from typing import List, Tuple, Optional, Callable
 
@@ -11,30 +16,72 @@ import librosa
 
 from app.config import WHISPER_MODEL_NAME
 
+logger = logging.getLogger(__name__)
+
+# Check for GGML support
+try:
+    from pywhispercpp.model import Model as WhisperCppModel
+    HAS_WHISPER_CPP = True
+except ImportError:
+    HAS_WHISPER_CPP = False
+    WhisperCppModel = None
 
 # Lazy load heavy dependencies
 _whisper_processor = None
 _whisper_model = None
+_whisper_cpp_model = None
 _device = None
+_current_model_name = None
 
 
-def _load_whisper_model():
-    """Lazy load Whisper model from HuggingFace."""
-    global _whisper_processor, _whisper_model, _device
+def _load_whisper_model(model_name: str = None):
+    """Lazy load Whisper model - tries GGML first (faster), then HuggingFace."""
+    global _whisper_processor, _whisper_model, _whisper_cpp_model, _device, _current_model_name
     
-    if _whisper_model is not None:
-        return _whisper_processor, _whisper_model, _device
+    model_name = model_name or WHISPER_MODEL_NAME
     
+    # If model already loaded with same name, return it
+    if _current_model_name == model_name:
+        if _whisper_cpp_model is not None:
+            return None, None, None, _whisper_cpp_model
+        elif _whisper_model is not None:
+            return _whisper_processor, _whisper_model, _device, None
+    
+    # Reset
+    _whisper_processor = None
+    _whisper_model = None
+    _whisper_cpp_model = None
+    _device = None
+    _current_model_name = model_name
+    
+    # Check if it's a GGML model path
+    if model_name.endswith('.bin') and HAS_WHISPER_CPP:
+        # Try to load GGML model
+        app_folder = Path(__file__).parent.parent.parent.parent  # ttsdatasetbuilder folder
+        model_path = app_folder / "models" / model_name
+        
+        if model_path.exists():
+            logger.info(f"Loading GGML Whisper model from {model_path}...")
+            try:
+                _whisper_cpp_model = WhisperCppModel(str(model_path), n_threads=6, print_realtime=False, print_progress=False)
+                logger.info("GGML model loaded successfully!")
+                return None, None, None, _whisper_cpp_model
+            except Exception as e:
+                logger.warning(f"Failed to load GGML model: {e}")
+    
+    # Fall back to HuggingFace
+    logger.info(f"Loading HuggingFace Whisper model: {model_name}...")
     try:
         from transformers import WhisperProcessor, WhisperForConditionalGeneration
         import torch
         
-        _whisper_processor = WhisperProcessor.from_pretrained(WHISPER_MODEL_NAME)
-        _whisper_model = WhisperForConditionalGeneration.from_pretrained(WHISPER_MODEL_NAME)
+        _whisper_processor = WhisperProcessor.from_pretrained(model_name)
+        _whisper_model = WhisperForConditionalGeneration.from_pretrained(model_name)
         _device = "cuda" if torch.cuda.is_available() else "cpu"
         _whisper_model.to(_device)
+        logger.info(f"HuggingFace model loaded on {_device}")
         
-        return _whisper_processor, _whisper_model, _device
+        return _whisper_processor, _whisper_model, _device, None
     except Exception as e:
         raise RuntimeError(f"Failed to load Whisper model: {e}")
 
@@ -157,14 +204,30 @@ def split_audio_on_silence(
     return chunks
 
 
-def transcribe_audio(audio_data: np.ndarray, sample_rate: int = 44100) -> str:
-    """Transcribe audio using Whisper."""
-    processor, model, device = _load_whisper_model()
-    
-    import torch
+def transcribe_audio(audio_data: np.ndarray, sample_rate: int = 44100, model_name: str = None, temp_folder: str = None) -> str:
+    """Transcribe audio using Whisper (GGML or HuggingFace)."""
+    processor, model, device, cpp_model = _load_whisper_model(model_name)
     
     # Resample to 16kHz for Whisper
     chunk_16k = librosa.resample(audio_data, orig_sr=sample_rate, target_sr=16000)
+    
+    # Use GGML model if available (much faster on CPU)
+    if cpp_model is not None:
+        # pywhispercpp needs a file path
+        temp_path = os.path.join(temp_folder or tempfile.gettempdir(), "temp_whisper_16k.wav")
+        sf.write(temp_path, chunk_16k, 16000, subtype='PCM_16')
+        
+        try:
+            segments = cpp_model.transcribe(temp_path, language='ro')
+            text = "".join([s.text for s in segments])
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        
+        return text.strip().replace('\n', ' ').replace('  ', ' ')
+    
+    # Use HuggingFace model
+    import torch
     
     # Process with Whisper
     input_features = processor(
@@ -173,11 +236,17 @@ def transcribe_audio(audio_data: np.ndarray, sample_rate: int = 44100) -> str:
         return_tensors="pt"
     ).input_features.to(device)
     
-    # Generate transcription
+    # Force Romanian language - create forced_decoder_ids
+    # This ensures the model outputs Romanian text
+    forced_decoder_ids = processor.get_decoder_prompt_ids(language="ro", task="transcribe")
+    
+    # Generate transcription with forced Romanian language
     predicted_ids = model.generate(
         input_features,
+        forced_decoder_ids=forced_decoder_ids,
         language="ro",
-        task="transcribe"
+        task="transcribe",
+        max_new_tokens=448  # Standard Whisper max tokens
     )
     
     transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
@@ -310,7 +379,7 @@ def process_videos_to_dataset(
                     
                     # Transcribe
                     try:
-                        text = transcribe_audio(chunk_data)
+                        text = transcribe_audio(chunk_data, model_name=whisper_model, temp_folder=project_folder)
                         
                         if text and len(text) >= 2:
                             # Write to CSV

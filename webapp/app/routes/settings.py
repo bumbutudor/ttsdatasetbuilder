@@ -1,5 +1,6 @@
 """Project settings routes."""
-from typing import Optional
+from typing import Optional, List
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -10,6 +11,41 @@ from app.auth import get_current_active_user
 from app.models import User, Project, ProjectSettings
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
+
+
+# HuggingFace models that are known to work well
+HUGGINGFACE_WHISPER_MODELS = [
+    {"name": "iRaduS/whisper-romanian-finetune", "label": "iRaduS/whisper-romanian-finetune (HuggingFace)", "type": "huggingface"},
+    {"name": "TransferRapid/whisper-large-v3-turbo_ro", "label": "TransferRapid/whisper-large-v3-turbo_ro (HuggingFace)", "type": "huggingface"},
+    {"name": "gigant/whisper-medium-romanian", "label": "gigant/whisper-medium-romanian (HuggingFace)", "type": "huggingface"},
+    {"name": "readerbench/whisper-ro", "label": "readerbench/whisper-ro (HuggingFace)", "type": "huggingface"},
+]
+
+
+@router.get("/whisper-models")
+async def get_available_whisper_models(
+    current_user: User = Depends(get_current_active_user)
+):
+    """Get list of available Whisper models (GGML local + HuggingFace)."""
+    models = []
+    
+    # Check for local GGML models in 'models/' folder
+    app_folder = Path(__file__).parent.parent.parent.parent  # ttsdatasetbuilder folder
+    models_folder = app_folder / "models"
+    
+    if models_folder.exists():
+        for model_file in models_folder.glob("*.bin"):
+            models.append({
+                "name": model_file.name,
+                "label": f"⚡ {model_file.name} (Local GGML - Fast)",
+                "type": "ggml",
+                "size": f"{model_file.stat().st_size / (1024*1024):.0f} MB"
+            })
+    
+    # Add HuggingFace models
+    models.extend(HUGGINGFACE_WHISPER_MODELS)
+    
+    return {"models": models}
 
 
 class SettingsUpdate(BaseModel):

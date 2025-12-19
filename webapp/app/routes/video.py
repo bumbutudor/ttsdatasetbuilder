@@ -40,6 +40,10 @@ def process_videos_task(
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from app.services.video_processor import process_videos_to_dataset
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting Video task job_id={job_id}, project_id={project_id}")
     
     engine = create_engine(db_url)
     SessionLocal = sessionmaker(bind=engine)
@@ -50,7 +54,10 @@ def process_videos_task(
         project = db.query(Project).filter(Project.id == project_id).first()
         
         if not job or not project:
+            logger.error(f"Job or project not found: job={job}, project={project}")
             return
+        
+        logger.info(f"Processing {len(file_paths)} videos for folder: {project.folder_path}")
         
         job.status = ProjectStatus.PROCESSING
         job.started_at = datetime.utcnow()
@@ -83,19 +90,27 @@ def process_videos_task(
         from app.models import DatasetEntry
         
         csv_path = os.path.join(project.folder_path, 'metadata.csv')
+        logger.info(f"Looking for CSV at: {csv_path}")
+        
+        db_entries_added = 0
         
         if os.path.exists(csv_path):
+            logger.info("CSV found, reading entries...")
+            
             # Get existing wav_filenames to avoid duplicates
-            existing_filenames = set(
-                entry.wav_filename for entry in 
-                db.query(DatasetEntry.wav_filename).filter(DatasetEntry.project_id == project_id).all()
-            )
+            existing_entries = db.query(DatasetEntry.wav_filename).filter(
+                DatasetEntry.project_id == project_id
+            ).all()
+            existing_filenames = set(e.wav_filename for e in existing_entries)
+            logger.info(f"Found {len(existing_filenames)} existing entries in DB")
             
             # Read CSV and insert only NEW entries
-            db_entries_added = 0
             with open(csv_path, 'r', encoding='utf-8') as f:
                 reader = csv_module.reader(f, delimiter='|')
-                for row in reader:
+                rows = list(reader)
+                logger.info(f"CSV has {len(rows)} rows")
+                
+                for row in rows:
                     if len(row) >= 2:
                         wav_filename = row[0]
                         # Skip if already in database
@@ -105,6 +120,7 @@ def process_videos_task(
                         # Check if audio file exists
                         audio_file_path = os.path.join(project.folder_path, wav_filename)
                         audio_exists = os.path.exists(audio_file_path)
+                        logger.info(f"Checking audio: {audio_file_path} exists={audio_exists}")
                         
                         entry = DatasetEntry(
                             project_id=project_id,
@@ -115,8 +131,13 @@ def process_videos_task(
                         )
                         db.add(entry)
                         db_entries_added += 1
+                        logger.info(f"Added entry: {wav_filename}, has_audio={audio_exists}")
             
+            logger.info(f"Added {db_entries_added} new entries to DB")
             db.commit()
+            logger.info("DB committed successfully")
+        else:
+            logger.error(f"CSV not found at {csv_path}")
         
         # Update project counts
         total_entries = db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).count()
@@ -125,13 +146,15 @@ def process_videos_task(
             DatasetEntry.has_audio == True
         ).count()
         
+        logger.info(f"Total entries: {total_entries}, recorded: {recorded_entries}")
+        
         project.total_entries = total_entries
         project.recorded_entries = recorded_entries
         
         job.status = ProjectStatus.COMPLETED
         job.progress = 100
         job.completed_at = datetime.utcnow()
-        job.message = f"Added {entries_added} segments (total: {total_entries})"
+        job.message = f"Added {db_entries_added} segments (total: {total_entries})"
         db.commit()
         
     except Exception as e:
@@ -152,6 +175,8 @@ async def process_videos(
     db: Session = Depends(get_db)
 ):
     """Start video processing with Whisper."""
+    from app.config import PROJECTS_DIR
+    
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id
@@ -162,6 +187,14 @@ async def process_videos(
     
     if not request.files:
         raise HTTPException(status_code=400, detail="No files selected")
+    
+    # Ensure project folder exists
+    if not project.folder_path:
+        folder_name = f"project_{project.dataset_type.value}_{project.id}_{datetime.now().strftime('%Y%m%d')}"
+        folder_path = PROJECTS_DIR / folder_name
+        folder_path.mkdir(parents=True, exist_ok=True)
+        project.folder_path = str(folder_path)
+        db.commit()
     
     # Build full paths
     upload_folder = UPLOAD_DIR / f"project_{project_id}"

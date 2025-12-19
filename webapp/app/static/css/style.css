@@ -586,6 +586,42 @@ tr:hover {
     background: rgba(16, 185, 129, 0.03);
 }
 
+/* Text cells - expandable */
+.text-cell {
+    position: relative;
+}
+
+.text-content {
+    transition: all 0.2s ease;
+}
+
+.text-content.collapsed {
+    max-width: 300px;
+    max-height: 2.4em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.text-content.expanded {
+    max-width: none;
+    max-height: none;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--color-bg-tertiary);
+    padding: var(--space-sm);
+    border-radius: var(--radius-sm);
+    position: relative;
+    z-index: 10;
+}
+
+.text-cell:hover .text-content.collapsed::after {
+    content: '(click to expand)';
+    color: var(--color-accent);
+    font-size: 0.75rem;
+    margin-left: var(--space-sm);
+}
+
 /* ============== Modal ============== */
 .modal-overlay {
     position: fixed;

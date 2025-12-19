@@ -37,6 +37,29 @@
             </div>
         </div>
     </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label class="form-label">Min Silence Duration for Split (seconds)</label>
+            <input type="number" id="min-silence-duration" class="form-control" value="0.5" min="0.1" max="3" step="0.1">
+            <small class="text-muted">Minimum pause duration to consider as a split point. Shorter pauses will join segments together.</small>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Padding Duration (seconds)</label>
+            <input type="number" id="padding-duration" class="form-control" value="0.2" min="0" max="1" step="0.1">
+            <small class="text-muted">Silence added at the start and end of each segment.</small>
+        </div>
+    </div>
+    <div class="form-group">
+        <label class="form-label">Silence Detection Threshold (dB)</label>
+        <input type="range" id="silence-threshold" class="form-control" value="45" min="20" max="60" step="5" 
+               oninput="document.getElementById('threshold-value').textContent = this.value + ' dB'">
+        <div class="flex flex-between text-small text-muted mt-sm">
+            <span>More sensitive (20)</span>
+            <span id="threshold-value">45 dB</span>
+            <span>Less sensitive (60)</span>
+        </div>
+        <small class="text-muted">Lower values detect quieter sounds as non-silence (may avoid cutting words).</small>
+    </div>
 </div>
 
 <!-- Video Selection -->
@@ -232,6 +255,9 @@ async function startVideoProcessing() {
     const whisperModel = document.getElementById('whisper-model').value;
     const minDuration = parseInt(document.getElementById('min-duration').value);
     const maxDuration = parseInt(document.getElementById('max-duration').value);
+    const minSilenceDuration = parseFloat(document.getElementById('min-silence-duration').value);
+    const paddingDuration = parseFloat(document.getElementById('padding-duration').value);
+    const silenceThreshold = parseInt(document.getElementById('silence-threshold').value);
     
     const statusDiv = document.getElementById('processing-status');
     statusDiv.classList.remove('hidden');
@@ -242,7 +268,10 @@ async function startVideoProcessing() {
             files: videos,
             whisper_model: whisperModel,
             min_duration: minDuration,
-            max_duration: maxDuration
+            max_duration: maxDuration,
+            min_silence_duration: minSilenceDuration,
+            padding_duration: paddingDuration,
+            silence_threshold: silenceThreshold
         });
         
         if (!response.ok) {

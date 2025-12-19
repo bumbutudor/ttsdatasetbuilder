@@ -100,34 +100,44 @@ async function loadProjects() {
         document.getElementById('quick-start').style.display = data.projects.length === 0 ? 'block' : 'none';
         
         container.innerHTML = data.projects.map(project => `
-            <div class="card project-card fade-in" style="cursor: pointer;" onclick="selectProjectAndNavigate(${project.id})">
+            <div class="card project-card fade-in">
                 <div class="flex flex-between items-center mb-md">
                     <span class="badge badge-${project.dataset_type.toLowerCase()}">${project.dataset_type}</span>
-                    <span class="badge badge-${project.status}">${project.status}</span>
-                </div>
-                <h3 style="margin-bottom: var(--space-sm);">${escapeHtml(project.name)}</h3>
-                <p class="text-muted text-small">${escapeHtml(project.description) || 'No description'}</p>
-                
-                <div class="flex gap-lg mt-lg">
-                    <div>
-                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--color-accent);">${project.total_entries}</div>
-                        <div class="text-muted text-small">Entries</div>
-                    </div>
-                    <div>
-                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--color-success);">${project.recorded_entries}</div>
-                        <div class="text-muted text-small">Recorded</div>
-                    </div>
-                    <div>
-                        <div style="font-size: 1.5rem; font-weight: 700;">${Math.round(project.estimated_duration_seconds / 3600 * 10) / 10}h</div>
-                        <div class="text-muted text-small">Duration</div>
+                    <div class="flex gap-sm items-center">
+                        <span class="badge badge-${project.status}">${project.status}</span>
+                        <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); deleteProject(${project.id}, '${escapeHtml(project.name)}')" title="Delete Project">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                        </button>
                     </div>
                 </div>
-                
-                ${project.total_entries > 0 ? `
-                    <div class="progress mt-md">
-                        <div class="progress-bar" style="width: ${(project.recorded_entries / project.total_entries) * 100}%"></div>
+                <div style="cursor: pointer;" onclick="selectProjectAndNavigate(${project.id})">
+                    <h3 style="margin-bottom: var(--space-sm);">${escapeHtml(project.name)}</h3>
+                    <p class="text-muted text-small">${escapeHtml(project.description) || 'No description'}</p>
+                    
+                    <div class="flex gap-lg mt-lg">
+                        <div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: var(--color-accent);">${project.total_entries}</div>
+                            <div class="text-muted text-small">Entries</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: var(--color-success);">${project.recorded_entries}</div>
+                            <div class="text-muted text-small">Recorded</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 1.5rem; font-weight: 700;">${Math.round(project.estimated_duration_seconds / 3600 * 10) / 10}h</div>
+                            <div class="text-muted text-small">Duration</div>
+                        </div>
                     </div>
-                ` : ''}
+                    
+                    ${project.total_entries > 0 ? `
+                        <div class="progress mt-md">
+                            <div class="progress-bar" style="width: ${(project.recorded_entries / project.total_entries) * 100}%"></div>
+                        </div>
+                    ` : ''}
+                </div>
             </div>
         `).join('');
         
@@ -146,6 +156,31 @@ function escapeHtml(text) {
 function selectProjectAndNavigate(projectId) {
     localStorage.setItem('currentProjectId', projectId);
     window.location.href = '/files';
+}
+
+async function deleteProject(projectId, projectName) {
+    if (!confirm(`Are you sure you want to delete project "${projectName}"?\n\nThis will permanently delete all files and data!`)) {
+        return;
+    }
+    
+    try {
+        const response = await api.delete(`/api/projects/${projectId}`);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to delete project');
+        }
+        
+        // Clear current project if it was the deleted one
+        if (localStorage.getItem('currentProjectId') == projectId) {
+            localStorage.removeItem('currentProjectId');
+        }
+        
+        ui.showAlert('Project deleted successfully');
+        loadProjects();
+        loadProjectSelector();
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+    }
 }
 
 async function createProject(event) {

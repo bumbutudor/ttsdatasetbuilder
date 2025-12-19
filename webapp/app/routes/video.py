@@ -19,6 +19,9 @@ class VideoProcessRequest(BaseModel):
     whisper_model: str = "iRaduS/whisper-romanian-finetune"
     min_duration: int = 3
     max_duration: int = 10
+    min_silence_duration: float = 0.5  # Minimum pause to consider split
+    padding_duration: float = 0.2  # Silence added at start/end
+    silence_threshold: int = 45  # dB threshold for silence detection
 
 
 def process_videos_task(
@@ -28,6 +31,9 @@ def process_videos_task(
     whisper_model: str,
     min_duration: int,
     max_duration: int,
+    min_silence_duration: float,
+    padding_duration: float,
+    silence_threshold: int,
     db_url: str
 ):
     """Background task for video processing."""
@@ -62,7 +68,10 @@ def process_videos_task(
             progress_callback,
             whisper_model=whisper_model,
             min_dur=min_duration,
-            max_dur=max_duration
+            max_dur=max_duration,
+            min_silence_duration=min_silence_duration,
+            padding_duration=padding_duration,
+            silence_threshold=silence_threshold
         )
         
         project.total_entries = valid_count
@@ -135,6 +144,9 @@ async def process_videos(
         request.whisper_model,
         request.min_duration,
         request.max_duration,
+        request.min_silence_duration,
+        request.padding_duration,
+        request.silence_threshold,
         DATABASE_URL
     )
     

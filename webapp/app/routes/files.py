@@ -178,6 +178,7 @@ async def upload_videos(
 async def view_file(
     project_id: int,
     filename: str,
+    token: str = None,  # Accept token in query params for new tab opening
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
@@ -185,6 +186,45 @@ async def view_file(
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Security check
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    file_path = UPLOAD_DIR / f"project_{project_id}" / filename
+    
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    return FileResponse(
+        path=str(file_path),
+        filename=filename,
+        media_type=get_media_type(filename)
+    )
+
+
+@router.get("/{project_id}/download/{filename}")
+async def download_file_with_token(
+    project_id: int,
+    filename: str,
+    token: str,
+    db: Session = Depends(get_db)
+):
+    """Download file using token in URL (for opening in new tab)."""
+    from app.auth import get_user_from_token
+    
+    # Verify token
+    user = get_user_from_token(token, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == user.id
     ).first()
     
     if not project:

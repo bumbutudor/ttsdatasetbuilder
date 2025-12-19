@@ -244,7 +244,8 @@ function renderFiles(data) {
 
 async function viewFile(filename) {
     const projectId = getCurrentProjectId();
-    window.open(`/api/files/${projectId}/view/${filename}`, '_blank');
+    const token = api.token;
+    window.open(`/api/files/${projectId}/download/${filename}?token=${encodeURIComponent(token)}`, '_blank');
 }
 
 async function deleteFile(filename) {

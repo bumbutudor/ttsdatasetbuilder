@@ -226,3 +226,8 @@ def normalize_text(text: str, mode: Literal["TTS", "STT"]) -> str:
     else:
         return normalize_stt(text)
 
+
+# Aliases for compatibility
+normalize_for_tts = normalize_tts
+normalize_for_stt = normalize_stt
+

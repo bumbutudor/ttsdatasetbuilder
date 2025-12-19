@@ -66,7 +66,10 @@ def split_audio_on_silence(
     audio_path: str,
     min_dur: float,
     max_dur: float,
-    mode: str
+    mode: str,
+    min_silence_duration: float = 0.5,
+    padding_duration: float = 0.2,
+    silence_threshold: int = 45
 ) -> List[np.ndarray]:
     """
     Split audio into chunks based on silence detection.
@@ -76,18 +79,21 @@ def split_audio_on_silence(
         min_dur: Minimum chunk duration in seconds
         max_dur: Maximum chunk duration in seconds
         mode: 'TTS' or 'STT'
+        min_silence_duration: Minimum pause to consider as split point
+        padding_duration: Silence added at start/end of segments
+        silence_threshold: dB threshold for silence detection
     
     Returns:
         List of audio chunks as numpy arrays
     """
-    MIN_SILENCE_DURATION = 0.5
-    PAD_DURATION = 0.2 if mode == 'TTS' else 0.5
+    MIN_SILENCE_DURATION = min_silence_duration
+    PAD_DURATION = padding_duration
     
     # Load audio
     y, sr = librosa.load(audio_path, sr=44100)
     
     # Detect non-silent intervals
-    top_db = 45 if mode == 'TTS' else 30
+    top_db = silence_threshold
     intervals = librosa.effects.split(y, top_db=top_db)
     
     # Merge intervals that are too close
@@ -186,7 +192,13 @@ def process_videos_to_dataset(
     video_paths: List[str],
     project_folder: str,
     mode: str,
-    progress_callback: Optional[Callable[[int, str], None]] = None
+    progress_callback: Optional[Callable[[int, str], None]] = None,
+    whisper_model: str = None,
+    min_dur: int = None,
+    max_dur: int = None,
+    min_silence_duration: float = 0.5,
+    padding_duration: float = 0.2,
+    silence_threshold: int = 45
 ) -> Tuple[int, str]:
     """
     Process video files and create dataset.
@@ -196,17 +208,23 @@ def process_videos_to_dataset(
         project_folder: Destination folder for the project
         mode: 'TTS' or 'STT'
         progress_callback: Optional callback for progress updates
+        whisper_model: HuggingFace model name
+        min_dur: Minimum segment duration
+        max_dur: Maximum segment duration
+        min_silence_duration: Minimum pause to consider as split point
+        padding_duration: Silence added at start/end
+        silence_threshold: dB threshold for silence detection
     
     Returns:
         Tuple of (valid_count, csv_path)
     """
     os.makedirs(project_folder, exist_ok=True)
     
-    # Set duration limits based on mode
-    if mode == 'TTS':
-        min_dur, max_dur = 3, 10
-    else:  # STT
-        min_dur, max_dur = 3, 30
+    # Set duration limits based on mode if not provided
+    if min_dur is None:
+        min_dur = 3
+    if max_dur is None:
+        max_dur = 10 if mode == 'TTS' else 30
     
     csv_path = os.path.join(project_folder, 'metadata.csv')
     valid_count = 0
@@ -249,7 +267,10 @@ def process_videos_to_dataset(
                         f"Splitting audio from {video_name}..."
                     )
                 
-                chunks = split_audio_on_silence(temp_audio_path, min_dur, max_dur, mode)
+                chunks = split_audio_on_silence(
+                    temp_audio_path, min_dur, max_dur, mode,
+                    min_silence_duration, padding_duration, silence_threshold
+                )
                 
                 # Transcribe each chunk
                 for c_idx, chunk_data in enumerate(chunks):

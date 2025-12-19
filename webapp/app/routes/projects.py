@@ -146,6 +146,11 @@ async def delete_project(
     if project.folder_path and os.path.exists(project.folder_path):
         shutil.rmtree(project.folder_path)
     
+    # Delete upload folder
+    upload_folder = UPLOAD_DIR / f"project_{project_id}"
+    if upload_folder.exists():
+        shutil.rmtree(upload_folder)
+    
     db.delete(project)
     db.commit()
     

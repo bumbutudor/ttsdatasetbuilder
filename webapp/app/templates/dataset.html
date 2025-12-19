@@ -223,13 +223,11 @@ async function loadDataset() {
                         : '<span class="text-muted">—</span>'}
                 </td>
                 <td><code>${entry.wav_filename}</code></td>
-                <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" 
-                    title="${escapeHtml(entry.original_text)}">
-                    ${escapeHtml(entry.original_text)}
+                <td class="text-cell" onclick="toggleTextExpand(this)" style="cursor: pointer;">
+                    <div class="text-content collapsed">${escapeHtml(entry.original_text)}</div>
                 </td>
-                <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
-                    title="${escapeHtml(entry.normalized_text || '')}">
-                    ${escapeHtml(entry.normalized_text || '—')}
+                <td class="text-cell" onclick="toggleTextExpand(this)" style="cursor: pointer;">
+                    <div class="text-content collapsed">${escapeHtml(entry.normalized_text || '—')}</div>
                 </td>
                 <td>
                     <button class="btn btn-sm btn-danger" onclick="deleteEntry(${entry.id})">Delete</button>
@@ -247,6 +245,14 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function toggleTextExpand(cell) {
+    const content = cell.querySelector('.text-content');
+    if (content) {
+        content.classList.toggle('collapsed');
+        content.classList.toggle('expanded');
+    }
 }
 
 function prevPage() {

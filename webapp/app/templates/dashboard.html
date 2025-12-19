@@ -1,0 +1,184 @@
+{% extends "app_layout.html" %}
+{% set active_page = 'dashboard' %}
+
+{% block title %}Dashboard - Dataset Builder{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="flex flex-between items-center">
+        <div>
+            <h1>📊 Dashboard</h1>
+            <p>Welcome back! Manage your TTS and STT dataset projects.</p>
+        </div>
+        <button class="btn btn-primary" onclick="ui.showModal('create-project-modal')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            New Project
+        </button>
+    </div>
+</div>
+
+<!-- Projects Grid -->
+<div id="projects-container" class="grid-3">
+    <div class="card text-center">
+        <span class="spinner"></span>
+        <p class="mt-md text-muted">Loading projects...</p>
+    </div>
+</div>
+
+<!-- Quick Start Guide -->
+<div class="card mt-xl" id="quick-start">
+    <h3 class="mb-lg">🚀 Quick Start Guide</h3>
+    <div class="grid-2">
+        <div>
+            <h4 class="mb-md">Creating a TTS Dataset</h4>
+            <ol class="text-muted" style="padding-left: var(--space-lg);">
+                <li class="mb-sm">Create a new project with type "TTS"</li>
+                <li class="mb-sm">Upload PDF or TXT files in "Uploaded Files"</li>
+                <li class="mb-sm">Generate CSV using Spacy or Vision LLM</li>
+                <li class="mb-sm">Record your voice in "Voice Recorder"</li>
+                <li class="mb-sm">Apply TTS normalization</li>
+                <li class="mb-sm">Download your dataset!</li>
+            </ol>
+        </div>
+        <div>
+            <h4 class="mb-md">Creating an STT Dataset</h4>
+            <ol class="text-muted" style="padding-left: var(--space-lg);">
+                <li class="mb-sm">Create a new project with type "STT"</li>
+                <li class="mb-sm">Upload video files in "Uploaded Files"</li>
+                <li class="mb-sm">Process videos with Whisper in "Video to Dataset"</li>
+                <li class="mb-sm">Apply STT normalization</li>
+                <li class="mb-sm">Clean up using "Cleanse Dataset"</li>
+                <li class="mb-sm">Download your dataset!</li>
+            </ol>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    if (!api.isAuthenticated()) {
+        window.location.href = '/login';
+        return;
+    }
+    
+    loadProjects();
+    loadProjectSelector();
+});
+
+async function loadProjects() {
+    const container = document.getElementById('projects-container');
+    
+    try {
+        const response = await api.get('/api/projects');
+        if (!response.ok) throw new Error('Failed to load projects');
+        
+        const data = await response.json();
+        
+        if (data.projects.length === 0) {
+            container.innerHTML = `
+                <div class="card text-center" style="grid-column: 1 / -1;">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" style="color: var(--color-text-muted); margin-bottom: var(--space-md);">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    <h3>No projects yet</h3>
+                    <p class="text-muted mt-md">Create your first dataset project to get started.</p>
+                    <button class="btn btn-primary mt-lg" onclick="ui.showModal('create-project-modal')">
+                        Create Project
+                    </button>
+                </div>
+            `;
+            document.getElementById('quick-start').style.display = 'block';
+            return;
+        }
+        
+        // Hide quick start if there are projects
+        document.getElementById('quick-start').style.display = data.projects.length === 0 ? 'block' : 'none';
+        
+        container.innerHTML = data.projects.map(project => `
+            <div class="card project-card fade-in" style="cursor: pointer;" onclick="selectProjectAndNavigate(${project.id})">
+                <div class="flex flex-between items-center mb-md">
+                    <span class="badge badge-${project.dataset_type.toLowerCase()}">${project.dataset_type}</span>
+                    <span class="badge badge-${project.status}">${project.status}</span>
+                </div>
+                <h3 style="margin-bottom: var(--space-sm);">${escapeHtml(project.name)}</h3>
+                <p class="text-muted text-small">${escapeHtml(project.description) || 'No description'}</p>
+                
+                <div class="flex gap-lg mt-lg">
+                    <div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--color-accent);">${project.total_entries}</div>
+                        <div class="text-muted text-small">Entries</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--color-success);">${project.recorded_entries}</div>
+                        <div class="text-muted text-small">Recorded</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 1.5rem; font-weight: 700;">${Math.round(project.estimated_duration_seconds / 3600 * 10) / 10}h</div>
+                        <div class="text-muted text-small">Duration</div>
+                    </div>
+                </div>
+                
+                ${project.total_entries > 0 ? `
+                    <div class="progress mt-md">
+                        <div class="progress-bar" style="width: ${(project.recorded_entries / project.total_entries) * 100}%"></div>
+                    </div>
+                ` : ''}
+            </div>
+        `).join('');
+        
+    } catch (error) {
+        container.innerHTML = `<p class="text-muted text-center" style="grid-column: 1 / -1;">Error: ${error.message}</p>`;
+    }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function selectProjectAndNavigate(projectId) {
+    localStorage.setItem('currentProjectId', projectId);
+    window.location.href = '/files';
+}
+
+async function createProject(event) {
+    event.preventDefault();
+    
+    const form = event.target;
+    const button = form.querySelector('button[type="submit"]');
+    const stopLoading = ui.showLoading(button);
+    
+    try {
+        const response = await api.post('/api/projects', {
+            name: form.name.value,
+            description: form.description.value,
+            dataset_type: form.dataset_type.value
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to create project');
+        }
+        
+        const project = await response.json();
+        ui.hideModal('create-project-modal');
+        ui.showAlert('Project created successfully!');
+        
+        // Select the new project and navigate
+        selectProjectAndNavigate(project.id);
+        
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+    } finally {
+        stopLoading();
+    }
+}
+</script>
+{% endblock %}

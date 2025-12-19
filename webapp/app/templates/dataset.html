@@ -1,0 +1,323 @@
+{% extends "app_layout.html" %}
+{% set active_page = 'dataset' %}
+
+{% block title %}View Dataset - Dataset Builder{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="flex flex-between items-center">
+        <div>
+            <h1>📊 View Dataset</h1>
+            <p>Browse and manage your dataset entries.</p>
+        </div>
+        <div class="flex gap-md">
+            <button class="btn btn-secondary" onclick="downloadDataset()">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Download ZIP
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Stats -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value" id="stat-total">0</div>
+        <div class="stat-label">Total Entries</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="stat-recorded">0</div>
+        <div class="stat-label">With Audio</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="stat-duration">0h</div>
+        <div class="stat-label">Est. Duration</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="stat-type">-</div>
+        <div class="stat-label">Dataset Type</div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-xl">
+    <div class="flex flex-between items-center">
+        <div class="flex gap-md items-center">
+            <div class="form-group" style="margin: 0;">
+                <input type="text" id="search-text" class="form-control" placeholder="Search text..." 
+                       style="width: 250px;" onkeyup="debounceSearch()">
+            </div>
+            <select id="filter-audio" class="form-control" style="width: 150px;" onchange="loadDataset()">
+                <option value="">All entries</option>
+                <option value="yes">With audio</option>
+                <option value="no">Without audio</option>
+            </select>
+        </div>
+        <div class="flex gap-md items-center">
+            <span class="text-muted">Show:</span>
+            <select id="per-page" class="form-control" style="width: 80px;" onchange="loadDataset()">
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+            </select>
+        </div>
+    </div>
+</div>
+
+<!-- Dataset Table -->
+<div class="card">
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 100px;">Audio</th>
+                    <th style="width: 120px;">Filename</th>
+                    <th>Original Text</th>
+                    <th>Normalized Text</th>
+                    <th style="width: 100px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="dataset-tbody">
+                <tr>
+                    <td colspan="5" class="text-center text-muted">Select a project to view dataset</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Pagination -->
+    <div class="mt-lg flex flex-between items-center">
+        <span class="text-muted">
+            Showing <span id="showing-start">0</span>-<span id="showing-end">0</span> 
+            of <span id="total-count">0</span> entries
+        </span>
+        <div class="flex gap-md items-center">
+            <button class="btn btn-sm btn-secondary" onclick="prevPage()" id="prev-btn" disabled>← Previous</button>
+            <span class="text-muted">Page <span id="current-page">1</span> of <span id="total-pages">1</span></span>
+            <button class="btn btn-sm btn-secondary" onclick="nextPage()" id="next-btn" disabled>Next →</button>
+        </div>
+    </div>
+</div>
+
+<!-- Audio Player Modal -->
+<div id="audio-modal" class="modal-overlay" onclick="if(event.target === this) closeAudioModal()">
+    <div class="modal" style="max-width: 400px;">
+        <div class="modal-header">
+            <h3>Play Audio</h3>
+            <button class="modal-close" onclick="closeAudioModal()">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+        <div class="text-center">
+            <p class="text-muted mb-lg" id="audio-filename">-</p>
+            <audio id="audio-player" controls style="width: 100%;"></audio>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 1;
+let perPage = 20;
+let totalEntries = 0;
+let searchTimeout = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (!api.isAuthenticated()) {
+        window.location.href = '/login';
+        return;
+    }
+    
+    loadProjectSelector();
+});
+
+function debounceSearch() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+        currentPage = 1;
+        loadDataset();
+    }, 300);
+}
+
+async function loadDatasetStats() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) return;
+    
+    try {
+        const response = await api.get(`/api/projects/${projectId}/stats`);
+        if (!response.ok) return;
+        
+        const stats = await response.json();
+        
+        document.getElementById('stat-total').textContent = stats.total_entries;
+        document.getElementById('stat-recorded').textContent = stats.recorded_entries;
+        document.getElementById('stat-duration').textContent = stats.estimated_duration_hours.toFixed(1) + 'h';
+        
+        // Get project type
+        const projectRes = await api.get(`/api/projects/${projectId}`);
+        if (projectRes.ok) {
+            const project = await projectRes.json();
+            document.getElementById('stat-type').textContent = project.dataset_type;
+        }
+        
+    } catch (error) {
+        console.error('Error loading stats:', error);
+    }
+}
+
+async function loadDataset() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) return;
+    
+    const search = document.getElementById('search-text').value;
+    const filterAudio = document.getElementById('filter-audio').value;
+    perPage = parseInt(document.getElementById('per-page').value);
+    
+    const tbody = document.getElementById('dataset-tbody');
+    
+    try {
+        let url = `/api/dataset/${projectId}?page=${currentPage}&per_page=${perPage}`;
+        if (search) url += `&search=${encodeURIComponent(search)}`;
+        if (filterAudio) url += `&has_audio=${filterAudio}`;
+        
+        const response = await api.get(url);
+        if (!response.ok) throw new Error('Failed to load dataset');
+        
+        const data = await response.json();
+        totalEntries = data.total;
+        
+        // Update pagination info
+        const start = (currentPage - 1) * perPage + 1;
+        const end = Math.min(currentPage * perPage, totalEntries);
+        document.getElementById('showing-start').textContent = totalEntries > 0 ? start : 0;
+        document.getElementById('showing-end').textContent = end;
+        document.getElementById('total-count').textContent = totalEntries;
+        document.getElementById('current-page').textContent = currentPage;
+        document.getElementById('total-pages').textContent = Math.ceil(totalEntries / perPage) || 1;
+        
+        document.getElementById('prev-btn').disabled = currentPage <= 1;
+        document.getElementById('next-btn').disabled = currentPage * perPage >= totalEntries;
+        
+        if (data.entries.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="text-center text-muted">No entries found</td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = data.entries.map(entry => `
+            <tr>
+                <td class="text-center">
+                    ${entry.has_audio 
+                        ? `<button class="btn btn-sm btn-secondary" onclick="playAudio('${entry.wav_filename}')">▶ Play</button>`
+                        : '<span class="text-muted">—</span>'}
+                </td>
+                <td><code>${entry.wav_filename}</code></td>
+                <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" 
+                    title="${escapeHtml(entry.original_text)}">
+                    ${escapeHtml(entry.original_text)}
+                </td>
+                <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                    title="${escapeHtml(entry.normalized_text || '')}">
+                    ${escapeHtml(entry.normalized_text || '—')}
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-danger" onclick="deleteEntry(${entry.id})">Delete</button>
+                </td>
+            </tr>
+        `).join('');
+        
+    } catch (error) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-error">${error.message}</td></tr>`;
+    }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function prevPage() {
+    if (currentPage > 1) {
+        currentPage--;
+        loadDataset();
+    }
+}
+
+function nextPage() {
+    if (currentPage * perPage < totalEntries) {
+        currentPage++;
+        loadDataset();
+    }
+}
+
+function playAudio(filename) {
+    const projectId = getCurrentProjectId();
+    const audioUrl = `/api/dataset/${projectId}/audio/${filename}`;
+    
+    document.getElementById('audio-filename').textContent = filename;
+    document.getElementById('audio-player').src = audioUrl;
+    document.getElementById('audio-modal').classList.add('active');
+    document.getElementById('audio-player').play();
+}
+
+function closeAudioModal() {
+    document.getElementById('audio-modal').classList.remove('active');
+    document.getElementById('audio-player').pause();
+}
+
+async function deleteEntry(entryId) {
+    if (!confirm('Delete this entry? This will also delete the audio file if it exists.')) return;
+    
+    const projectId = getCurrentProjectId();
+    
+    try {
+        const response = await api.delete(`/api/dataset/${projectId}/entry/${entryId}`);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Delete failed');
+        }
+        
+        ui.showAlert('Entry deleted');
+        loadDataset();
+        loadDatasetStats();
+        
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+    }
+}
+
+async function downloadDataset() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) {
+        ui.showAlert('Please select a project first', 'warning');
+        return;
+    }
+    
+    window.location.href = `/api/projects/${projectId}/download`;
+}
+
+// Override project change to reload dataset
+const originalSelectProject = window.selectProject;
+window.selectProject = async function(projectId) {
+    if (originalSelectProject) await originalSelectProject(projectId);
+    currentPage = 1;
+    loadDatasetStats();
+    loadDataset();
+};
+</script>
+{% endblock %}
+

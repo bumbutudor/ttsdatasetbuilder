@@ -1,0 +1,481 @@
+{% extends "app_layout.html" %}
+{% set active_page = 'recorder' %}
+
+{% block title %}Voice Recorder - Dataset Builder{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>🎙️ Voice Recorder</h1>
+    <p>Record your voice reading sentences from the dataset.</p>
+</div>
+
+<!-- Stats -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value" id="stat-total">0</div>
+        <div class="stat-label">Total Sentences</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="stat-recorded">0</div>
+        <div class="stat-label">Recorded</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="stat-pending">0</div>
+        <div class="stat-label">Pending</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="stat-progress">0%</div>
+        <div class="stat-label">Progress</div>
+    </div>
+</div>
+
+<!-- Recorder -->
+<div class="card">
+    <!-- Sentence Display -->
+    <div class="recorder-container">
+        <div class="recorder-progress">
+            <span class="text-muted">Sentence <strong id="current-index">0</strong> of <strong id="total-sentences">0</strong></span>
+        </div>
+        
+        <div class="sentence-display" id="sentence-text">
+            Select a project to start recording
+        </div>
+        
+        <!-- Waveform -->
+        <div class="waveform-container" id="waveform">
+            <canvas id="waveform-canvas" width="600" height="80"></canvas>
+        </div>
+        
+        <!-- Recording Timer -->
+        <div class="text-center mb-lg">
+            <span class="text-muted">Duration: </span>
+            <strong id="recording-duration">0:00</strong>
+            <span class="text-muted"> / </span>
+            <span id="max-duration">10s</span>
+        </div>
+        
+        <!-- Record Button -->
+        <div class="flex flex-center">
+            <button class="record-btn" id="record-btn" onclick="toggleRecording()" disabled>
+                <svg id="record-icon" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="12" cy="12" r="6"/>
+                </svg>
+            </button>
+        </div>
+        
+        <!-- Controls -->
+        <div class="recorder-controls">
+            <button class="btn btn-secondary" onclick="skipSentence()" id="skip-btn" disabled>
+                Skip (S)
+            </button>
+            <button class="btn btn-secondary" onclick="playRecording()" id="play-btn" disabled>
+                ▶ Play
+            </button>
+            <button class="btn btn-danger" onclick="discardRecording()" id="discard-btn" disabled>
+                Discard (D)
+            </button>
+            <button class="btn btn-primary" onclick="saveAndNext()" id="save-btn" disabled>
+                Save & Next (N)
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Settings -->
+<div class="card mt-xl">
+    <h4 class="mb-lg">Recording Settings</h4>
+    <div class="form-row">
+        <div class="form-group">
+            <label class="form-label">Microphone</label>
+            <select id="mic-select" class="form-control" onchange="changeMicrophone()">
+                <option value="">Loading microphones...</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Sample Rate</label>
+            <select id="sample-rate" class="form-control">
+                <option value="44100" selected>44100 Hz (Standard)</option>
+                <option value="48000">48000 Hz (High Quality)</option>
+            </select>
+        </div>
+    </div>
+    <div class="form-group">
+        <label class="form-check">
+            <input type="checkbox" id="auto-trim" checked>
+            <span>Auto-trim silence from recordings</span>
+        </label>
+    </div>
+</div>
+
+<!-- Keyboard Shortcuts -->
+<div class="card mt-lg">
+    <h4 class="mb-md">Keyboard Shortcuts</h4>
+    <div class="grid-3">
+        <div class="text-center">
+            <code>Space</code>
+            <p class="text-muted text-small">Start/Stop Recording</p>
+        </div>
+        <div class="text-center">
+            <code>N</code>
+            <p class="text-muted text-small">Save & Next</p>
+        </div>
+        <div class="text-center">
+            <code>D</code>
+            <p class="text-muted text-small">Discard</p>
+        </div>
+        <div class="text-center">
+            <code>S</code>
+            <p class="text-muted text-small">Skip</p>
+        </div>
+        <div class="text-center">
+            <code>P</code>
+            <p class="text-muted text-small">Play Recording</p>
+        </div>
+        <div class="text-center">
+            <code>Esc</code>
+            <p class="text-muted text-small">Cancel</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let mediaRecorder = null;
+let audioChunks = [];
+let audioBlob = null;
+let audioUrl = null;
+let isRecording = false;
+let recordingStartTime = null;
+let durationInterval = null;
+let currentSentenceIndex = 0;
+let sentences = [];
+let audioContext = null;
+let analyser = null;
+let dataArray = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (!api.isAuthenticated()) {
+        window.location.href = '/login';
+        return;
+    }
+    
+    loadProjectSelector();
+    loadMicrophones();
+    setupKeyboardShortcuts();
+});
+
+async function loadMicrophones() {
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter(d => d.kind === 'audioinput');
+        
+        const select = document.getElementById('mic-select');
+        select.innerHTML = mics.map((mic, i) => 
+            `<option value="${mic.deviceId}">${mic.label || `Microphone ${i + 1}`}</option>`
+        ).join('');
+    } catch (error) {
+        console.error('Error loading microphones:', error);
+        ui.showAlert('Could not access microphones. Please allow microphone access.', 'warning');
+    }
+}
+
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        
+        switch(e.code) {
+            case 'Space':
+                e.preventDefault();
+                toggleRecording();
+                break;
+            case 'KeyN':
+                if (!document.getElementById('save-btn').disabled) saveAndNext();
+                break;
+            case 'KeyD':
+                if (!document.getElementById('discard-btn').disabled) discardRecording();
+                break;
+            case 'KeyS':
+                if (!document.getElementById('skip-btn').disabled) skipSentence();
+                break;
+            case 'KeyP':
+                if (!document.getElementById('play-btn').disabled) playRecording();
+                break;
+            case 'Escape':
+                if (isRecording) stopRecording();
+                break;
+        }
+    });
+}
+
+async function loadSentences() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) return;
+    
+    try {
+        const response = await api.get(`/api/recorder/${projectId}/sentences`);
+        if (!response.ok) throw new Error('Failed to load sentences');
+        
+        const data = await response.json();
+        sentences = data.sentences;
+        
+        // Update stats
+        document.getElementById('stat-total').textContent = data.total;
+        document.getElementById('stat-recorded').textContent = data.recorded;
+        document.getElementById('stat-pending').textContent = data.pending;
+        document.getElementById('stat-progress').textContent = 
+            data.total > 0 ? Math.round((data.recorded / data.total) * 100) + '%' : '0%';
+        
+        document.getElementById('total-sentences').textContent = data.total;
+        
+        // Find first unrecorded sentence
+        currentSentenceIndex = sentences.findIndex(s => !s.has_audio);
+        if (currentSentenceIndex === -1) currentSentenceIndex = 0;
+        
+        displayCurrentSentence();
+        
+        // Enable controls
+        document.getElementById('record-btn').disabled = sentences.length === 0;
+        document.getElementById('skip-btn').disabled = sentences.length === 0;
+        
+        // Set max duration based on project type
+        const project = await api.get(`/api/projects/${projectId}`).then(r => r.json());
+        const maxDur = project.dataset_type === 'STT' ? '30s' : '10s';
+        document.getElementById('max-duration').textContent = maxDur;
+        
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+    }
+}
+
+function displayCurrentSentence() {
+    const sentenceEl = document.getElementById('sentence-text');
+    const indexEl = document.getElementById('current-index');
+    
+    if (sentences.length === 0) {
+        sentenceEl.textContent = 'No sentences to record. Generate CSV first.';
+        indexEl.textContent = '0';
+        return;
+    }
+    
+    const sentence = sentences[currentSentenceIndex];
+    sentenceEl.textContent = sentence.text;
+    indexEl.textContent = currentSentenceIndex + 1;
+    
+    // Reset recording state
+    resetRecordingState();
+}
+
+function resetRecordingState() {
+    audioBlob = null;
+    audioUrl = null;
+    document.getElementById('play-btn').disabled = true;
+    document.getElementById('save-btn').disabled = true;
+    document.getElementById('discard-btn').disabled = true;
+    document.getElementById('recording-duration').textContent = '0:00';
+}
+
+async function toggleRecording() {
+    if (isRecording) {
+        stopRecording();
+    } else {
+        startRecording();
+    }
+}
+
+async function startRecording() {
+    if (sentences.length === 0) return;
+    
+    try {
+        const micId = document.getElementById('mic-select').value;
+        const sampleRate = parseInt(document.getElementById('sample-rate').value);
+        
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                deviceId: micId ? { exact: micId } : undefined,
+                sampleRate: sampleRate,
+                channelCount: 1,
+                echoCancellation: false,
+                noiseSuppression: false
+            }
+        });
+        
+        // Setup audio context for visualization
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        const source = audioContext.createMediaStreamSource(stream);
+        source.connect(analyser);
+        analyser.fftSize = 256;
+        dataArray = new Uint8Array(analyser.frequencyBinCount);
+        
+        // Start visualization
+        visualize();
+        
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        
+        mediaRecorder.ondataavailable = (e) => {
+            audioChunks.push(e.data);
+        };
+        
+        mediaRecorder.onstop = () => {
+            audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+            audioUrl = URL.createObjectURL(audioBlob);
+            
+            // Enable playback and save
+            document.getElementById('play-btn').disabled = false;
+            document.getElementById('save-btn').disabled = false;
+            document.getElementById('discard-btn').disabled = false;
+            
+            // Stop stream
+            stream.getTracks().forEach(track => track.stop());
+        };
+        
+        mediaRecorder.start();
+        isRecording = true;
+        recordingStartTime = Date.now();
+        
+        // Update UI
+        document.getElementById('record-btn').classList.add('recording');
+        document.getElementById('record-icon').innerHTML = '<rect x="6" y="6" width="12" height="12"/>';
+        
+        // Start duration timer
+        durationInterval = setInterval(updateDuration, 100);
+        
+    } catch (error) {
+        ui.showAlert('Microphone access denied: ' + error.message, 'error');
+    }
+}
+
+function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+    }
+    
+    isRecording = false;
+    clearInterval(durationInterval);
+    
+    // Update UI
+    document.getElementById('record-btn').classList.remove('recording');
+    document.getElementById('record-icon').innerHTML = '<circle cx="12" cy="12" r="6"/>';
+    
+    if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+    }
+}
+
+function updateDuration() {
+    const elapsed = (Date.now() - recordingStartTime) / 1000;
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = Math.floor(elapsed % 60);
+    document.getElementById('recording-duration').textContent = 
+        `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function visualize() {
+    if (!analyser || !isRecording) return;
+    
+    const canvas = document.getElementById('waveform-canvas');
+    const ctx = canvas.getContext('2d');
+    
+    analyser.getByteFrequencyData(dataArray);
+    
+    ctx.fillStyle = 'rgb(30, 41, 59)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    const barWidth = (canvas.width / dataArray.length) * 2;
+    let x = 0;
+    
+    for (let i = 0; i < dataArray.length; i++) {
+        const barHeight = (dataArray[i] / 255) * canvas.height;
+        
+        ctx.fillStyle = `rgb(16, 185, ${129 + dataArray[i] / 2})`;
+        ctx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
+        
+        x += barWidth;
+    }
+    
+    if (isRecording) {
+        requestAnimationFrame(visualize);
+    }
+}
+
+function playRecording() {
+    if (!audioUrl) return;
+    
+    const audio = new Audio(audioUrl);
+    audio.play();
+}
+
+function discardRecording() {
+    resetRecordingState();
+    ui.showAlert('Recording discarded', 'info');
+}
+
+async function saveAndNext() {
+    if (!audioBlob) return;
+    
+    const projectId = getCurrentProjectId();
+    const sentence = sentences[currentSentenceIndex];
+    
+    try {
+        const formData = new FormData();
+        formData.append('audio', audioBlob, `${sentence.wav_filename}`);
+        formData.append('auto_trim', document.getElementById('auto-trim').checked);
+        
+        const response = await fetch(`/api/recorder/${projectId}/upload/${sentence.id}`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${api.token}`
+            },
+            body: formData
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Upload failed');
+        }
+        
+        ui.showAlert('Recording saved!');
+        
+        // Mark as recorded and move to next
+        sentences[currentSentenceIndex].has_audio = true;
+        currentSentenceIndex++;
+        
+        // Update stats
+        const recorded = sentences.filter(s => s.has_audio).length;
+        document.getElementById('stat-recorded').textContent = recorded;
+        document.getElementById('stat-pending').textContent = sentences.length - recorded;
+        document.getElementById('stat-progress').textContent = 
+            Math.round((recorded / sentences.length) * 100) + '%';
+        
+        if (currentSentenceIndex >= sentences.length) {
+            ui.showAlert('All sentences recorded! 🎉');
+            currentSentenceIndex = 0;
+        }
+        
+        displayCurrentSentence();
+        
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+    }
+}
+
+function skipSentence() {
+    currentSentenceIndex++;
+    if (currentSentenceIndex >= sentences.length) {
+        currentSentenceIndex = 0;
+    }
+    displayCurrentSentence();
+}
+
+// Override project change to reload sentences
+const originalSelectProject = window.selectProject;
+window.selectProject = async function(projectId) {
+    if (originalSelectProject) await originalSelectProject(projectId);
+    loadSentences();
+};
+</script>
+{% endblock %}
+

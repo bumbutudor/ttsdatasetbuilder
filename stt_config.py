@@ -8,7 +8,7 @@ MODEL_SOURCE = 'huggingface'
 
 # For 'ggml': filename in 'models' folder (e.g., 'ggml-whisper-medium-romanian.bin')
 # For 'huggingface': Model ID (e.g., 'TransferRapid/whisper-large-v3-turbo_ro')
-MODEL_NAME = 'readerbench/whisper-ro'
+MODEL_NAME = 'iRaduS/whisper-romanian-finetune'
 # MODEL_NAME = 'ggml-whisper-medium-romanian.bin'
 
 # Available HuggingFace models for reference:

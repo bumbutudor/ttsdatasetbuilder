@@ -1,0 +1,299 @@
+{% extends "app_layout.html" %}
+{% set active_page = 'settings' %}
+
+{% block title %}Settings - Dataset Builder{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>⚙️ Settings</h1>
+    <p>Configure parameters for text extraction, normalization, and transcription.</p>
+</div>
+
+<form onsubmit="saveSettings(event)" id="settings-form">
+    <!-- Text Extraction Settings -->
+    <div class="card mb-xl">
+        <h3 class="mb-lg">Text Extraction (Spacy)</h3>
+        <p class="text-muted text-small mb-lg">
+            Settings for extracting sentences from PDF/TXT files using Spacy NLP.
+        </p>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Minimum Sentence Length (chars)</label>
+                <input type="number" name="min_sentence_length" id="min_sentence_length" 
+                       class="form-control" value="30" min="10" max="100">
+                <small class="text-muted">Sentences shorter than this will be filtered out</small>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Maximum Sentence Length (chars)</label>
+                <input type="number" name="max_sentence_length" id="max_sentence_length" 
+                       class="form-control" value="100" min="50" max="500">
+                <small class="text-muted">Sentences longer than this will be filtered out</small>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label">Minimum Words per Sentence</label>
+            <input type="number" name="min_words" id="min_words" 
+                   class="form-control" value="5" min="2" max="20" style="max-width: 200px;">
+            <small class="text-muted">Sentences with fewer words will be filtered out</small>
+        </div>
+        
+        <div class="alert alert-info mt-lg" style="position: relative;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
+            </svg>
+            <span>
+                <strong>TTS recommended:</strong> min=30, max=100, words=5<br>
+                <strong>STT recommended:</strong> min=30, max=220, words=3
+            </span>
+        </div>
+    </div>
+    
+    <!-- Vision LLM Settings -->
+    <div class="card mb-xl">
+        <h3 class="mb-lg">Vision LLM Extraction</h3>
+        <p class="text-muted text-small mb-lg">
+            Settings for AI-powered text extraction from complex PDFs (formulas, tables).
+        </p>
+        
+        <div class="form-group">
+            <label class="form-label">AI Provider</label>
+            <select name="ai_provider" id="ai_provider" class="form-control" onchange="toggleProviderSettings()">
+                <option value="ollama">Ollama (Local)</option>
+                <option value="openai">OpenAI API</option>
+            </select>
+        </div>
+        
+        <div id="ollama-settings">
+            <div class="form-group">
+                <label class="form-label">Ollama Model</label>
+                <input type="text" name="ollama_model" id="ollama_model" 
+                       class="form-control" value="gemma3:4b" placeholder="e.g., gemma3:4b, llava:13b">
+                <small class="text-muted">
+                    Must be a vision-capable model. 
+                    <a href="https://ollama.com/search?c=vision" target="_blank">See available models</a>
+                </small>
+            </div>
+        </div>
+        
+        <div id="openai-settings" class="hidden">
+            <div class="form-group">
+                <label class="form-label">OpenAI Model</label>
+                <select name="openai_model" id="openai_model" class="form-control">
+                    <option value="gpt-4o-mini">GPT-4o Mini (Faster, cheaper)</option>
+                    <option value="gpt-4o">GPT-4o (Best quality)</option>
+                    <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">OpenAI API Key</label>
+                <input type="password" name="openai_api_key" id="openai_api_key" 
+                       class="form-control" placeholder="sk-...">
+                <small class="text-muted">Your API key is stored securely and never shared</small>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Whisper Settings -->
+    <div class="card mb-xl">
+        <h3 class="mb-lg">Speech-to-Text (Whisper)</h3>
+        <p class="text-muted text-small mb-lg">
+            Settings for transcribing audio using HuggingFace Whisper models.
+        </p>
+        
+        <div class="form-group">
+            <label class="form-label">Whisper Model</label>
+            <select name="whisper_model" id="whisper_model" class="form-control">
+                <option value="iRaduS/whisper-romanian-finetune">iRaduS/whisper-romanian-finetune (Recommended)</option>
+                <option value="TransferRapid/whisper-large-v3-turbo_ro">TransferRapid/whisper-large-v3-turbo_ro (Large)</option>
+                <option value="gigant/whisper-medium-romanian">gigant/whisper-medium-romanian (Medium)</option>
+                <option value="readerbench/whisper-ro">readerbench/whisper-ro</option>
+            </select>
+            <small class="text-muted">Romanian fine-tuned models from HuggingFace</small>
+        </div>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Minimum Segment Duration (seconds)</label>
+                <input type="number" name="min_segment_duration" id="min_segment_duration" 
+                       class="form-control" value="3" min="1" max="10">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Maximum Segment Duration (seconds)</label>
+                <input type="number" name="max_segment_duration" id="max_segment_duration" 
+                       class="form-control" value="10" min="5" max="30">
+            </div>
+        </div>
+    </div>
+    
+    <!-- Recording Settings -->
+    <div class="card mb-xl">
+        <h3 class="mb-lg">Voice Recording</h3>
+        <p class="text-muted text-small mb-lg">
+            Settings for the voice recorder.
+        </p>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Sample Rate</label>
+                <select name="sample_rate" id="sample_rate" class="form-control">
+                    <option value="44100" selected>44100 Hz (CD Quality)</option>
+                    <option value="48000">48000 Hz (Professional)</option>
+                    <option value="22050">22050 Hz (Economy)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Silence Threshold (dB)</label>
+                <input type="number" name="silence_threshold" id="silence_threshold" 
+                       class="form-control" value="30" min="10" max="60">
+                <small class="text-muted">Higher = more aggressive silence trimming</small>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-check">
+                <input type="checkbox" name="auto_trim" id="auto_trim" checked>
+                <span>Automatically trim silence from recordings</span>
+            </label>
+        </div>
+    </div>
+    
+    <!-- Save Button -->
+    <div class="flex gap-md" style="justify-content: flex-end;">
+        <button type="button" class="btn btn-secondary" onclick="resetSettings()">Reset to Defaults</button>
+        <button type="submit" class="btn btn-primary btn-lg" id="save-btn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                <polyline points="17 21 17 13 7 13 7 21"/>
+                <polyline points="7 3 7 8 15 8"/>
+            </svg>
+            Save Settings
+        </button>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    if (!api.isAuthenticated()) {
+        window.location.href = '/login';
+        return;
+    }
+    
+    loadProjectSelector();
+    toggleProviderSettings();
+});
+
+function toggleProviderSettings() {
+    const provider = document.getElementById('ai_provider').value;
+    document.getElementById('ollama-settings').classList.toggle('hidden', provider !== 'ollama');
+    document.getElementById('openai-settings').classList.toggle('hidden', provider !== 'openai');
+}
+
+async function loadSettings() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) return;
+    
+    try {
+        const response = await api.get(`/api/settings/${projectId}`);
+        if (!response.ok) return;
+        
+        const settings = await response.json();
+        
+        // Populate form
+        if (settings.min_sentence_length) document.getElementById('min_sentence_length').value = settings.min_sentence_length;
+        if (settings.max_sentence_length) document.getElementById('max_sentence_length').value = settings.max_sentence_length;
+        if (settings.min_words) document.getElementById('min_words').value = settings.min_words;
+        if (settings.ai_provider) document.getElementById('ai_provider').value = settings.ai_provider;
+        if (settings.ollama_model) document.getElementById('ollama_model').value = settings.ollama_model;
+        if (settings.openai_model) document.getElementById('openai_model').value = settings.openai_model;
+        if (settings.openai_api_key) document.getElementById('openai_api_key').value = settings.openai_api_key;
+        if (settings.whisper_model) document.getElementById('whisper_model').value = settings.whisper_model;
+        if (settings.min_segment_duration) document.getElementById('min_segment_duration').value = settings.min_segment_duration;
+        if (settings.max_segment_duration) document.getElementById('max_segment_duration').value = settings.max_segment_duration;
+        if (settings.sample_rate) document.getElementById('sample_rate').value = settings.sample_rate;
+        if (settings.silence_threshold) document.getElementById('silence_threshold').value = settings.silence_threshold;
+        if (settings.auto_trim !== undefined) document.getElementById('auto_trim').checked = settings.auto_trim;
+        
+        toggleProviderSettings();
+        
+    } catch (error) {
+        console.error('Error loading settings:', error);
+    }
+}
+
+async function saveSettings(event) {
+    event.preventDefault();
+    
+    const projectId = getCurrentProjectId();
+    if (!projectId) {
+        ui.showAlert('Please select a project first', 'warning');
+        return;
+    }
+    
+    const form = document.getElementById('settings-form');
+    const formData = new FormData(form);
+    
+    const settings = {
+        min_sentence_length: parseInt(formData.get('min_sentence_length')),
+        max_sentence_length: parseInt(formData.get('max_sentence_length')),
+        min_words: parseInt(formData.get('min_words')),
+        ai_provider: formData.get('ai_provider'),
+        ollama_model: formData.get('ollama_model'),
+        openai_model: formData.get('openai_model'),
+        openai_api_key: formData.get('openai_api_key'),
+        whisper_model: formData.get('whisper_model'),
+        min_segment_duration: parseInt(formData.get('min_segment_duration')),
+        max_segment_duration: parseInt(formData.get('max_segment_duration')),
+        sample_rate: parseInt(formData.get('sample_rate')),
+        silence_threshold: parseInt(formData.get('silence_threshold')),
+        auto_trim: formData.get('auto_trim') === 'on'
+    };
+    
+    try {
+        const response = await api.post(`/api/settings/${projectId}`, settings);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to save settings');
+        }
+        
+        ui.showAlert('Settings saved successfully!');
+        
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+    }
+}
+
+function resetSettings() {
+    if (!confirm('Reset all settings to defaults?')) return;
+    
+    document.getElementById('min_sentence_length').value = 30;
+    document.getElementById('max_sentence_length').value = 100;
+    document.getElementById('min_words').value = 5;
+    document.getElementById('ai_provider').value = 'ollama';
+    document.getElementById('ollama_model').value = 'gemma3:4b';
+    document.getElementById('openai_model').value = 'gpt-4o-mini';
+    document.getElementById('openai_api_key').value = '';
+    document.getElementById('whisper_model').value = 'iRaduS/whisper-romanian-finetune';
+    document.getElementById('min_segment_duration').value = 3;
+    document.getElementById('max_segment_duration').value = 10;
+    document.getElementById('sample_rate').value = 44100;
+    document.getElementById('silence_threshold').value = 30;
+    document.getElementById('auto_trim').checked = true;
+    
+    toggleProviderSettings();
+    ui.showAlert('Settings reset to defaults', 'info');
+}
+
+// Override project change to reload settings
+const originalSelectProject = window.selectProject;
+window.selectProject = async function(projectId) {
+    if (originalSelectProject) await originalSelectProject(projectId);
+    loadSettings();
+};
+</script>
+{% endblock %}
+

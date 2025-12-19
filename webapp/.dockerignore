@@ -1,0 +1,56 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv/
+ENV/
+env/
+.eggs
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Docker
+Dockerfile
+docker-compose*.yml
+
+# Data (will be mounted as volume)
+data/
+
+# Environment files
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Tests
+tests/
+pytest.ini
+.coverage
+htmlcov/
+
+# Documentation
+docs/
+*.md
+
+# Models (can be large)
+models/
+*.bin
+*.pt
+*.onnx
+

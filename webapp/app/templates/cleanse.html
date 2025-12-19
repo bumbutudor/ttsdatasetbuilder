@@ -1,0 +1,269 @@
+{% extends "app_layout.html" %}
+{% set active_page = 'cleanse' %}
+
+{% block title %}Cleanse Dataset - Dataset Builder{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>🧹 Cleanse Dataset</h1>
+    <p>Remove entries from metadata.csv that don't have corresponding audio files.</p>
+</div>
+
+<!-- Stats -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value" id="stat-total">0</div>
+        <div class="stat-label">Total Entries</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="stat-with-audio">0</div>
+        <div class="stat-label">With Audio</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value text-error" id="stat-missing">0</div>
+        <div class="stat-label">Missing Audio</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="stat-size">0 MB</div>
+        <div class="stat-label">Dataset Size</div>
+    </div>
+</div>
+
+<!-- Actions -->
+<div class="card mb-xl">
+    <h3 class="mb-lg">Dataset Actions</h3>
+    
+    <div class="grid-2">
+        <div>
+            <h4 class="mb-md">Cleanse Dataset</h4>
+            <p class="text-muted text-small mb-lg">
+                Removes all entries from metadata.csv where the .wav audio file doesn't exist.
+                A backup of the original file will be created.
+            </p>
+            <button class="btn btn-danger" onclick="cleanseDataset()" id="cleanse-btn">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+                Cleanse Dataset
+            </button>
+        </div>
+        
+        <div>
+            <h4 class="mb-md">Download Dataset</h4>
+            <p class="text-muted text-small mb-lg">
+                Download the complete dataset as a ZIP file containing metadata.csv and all audio files.
+            </p>
+            <button class="btn btn-primary" onclick="downloadDataset()" id="download-btn">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Download ZIP
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Missing Files List -->
+<div class="card">
+    <div class="card-header">
+        <h3>Missing Audio Files</h3>
+        <button class="btn btn-sm btn-secondary" onclick="loadMissingFiles()">Refresh</button>
+    </div>
+    
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Filename</th>
+                    <th>Original Text</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="missing-files-list">
+                <tr>
+                    <td colspan="3" class="text-center text-muted">Loading...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Processing Status -->
+<div id="cleanse-status" class="card mt-xl hidden">
+    <h3 class="mb-lg">Cleanse Progress</h3>
+    <div class="progress">
+        <div class="progress-bar" id="cleanse-progress" style="width: 0%"></div>
+    </div>
+    <p class="text-muted mt-md" id="cleanse-message">Processing...</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    if (!api.isAuthenticated()) {
+        window.location.href = '/login';
+        return;
+    }
+    
+    loadProjectSelector();
+});
+
+async function loadDatasetStats() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) return;
+    
+    try {
+        const response = await api.get(`/api/cleanse/${projectId}/stats`);
+        if (!response.ok) throw new Error('Failed to load stats');
+        
+        const stats = await response.json();
+        
+        document.getElementById('stat-total').textContent = stats.total_entries;
+        document.getElementById('stat-with-audio').textContent = stats.with_audio;
+        document.getElementById('stat-missing').textContent = stats.missing_audio;
+        document.getElementById('stat-size').textContent = formatSize(stats.total_size_bytes);
+        
+        // Disable cleanse if nothing to clean
+        document.getElementById('cleanse-btn').disabled = stats.missing_audio === 0;
+        
+    } catch (error) {
+        console.error('Error loading stats:', error);
+    }
+}
+
+async function loadMissingFiles() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) return;
+    
+    const tbody = document.getElementById('missing-files-list');
+    
+    try {
+        const response = await api.get(`/api/cleanse/${projectId}/missing`);
+        if (!response.ok) throw new Error('Failed to load missing files');
+        
+        const data = await response.json();
+        
+        if (data.missing.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="3" class="text-center text-success">✓ All entries have audio files!</td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = data.missing.map(entry => `
+            <tr>
+                <td><code>${entry.wav_filename}</code></td>
+                <td style="max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    ${escapeHtml(entry.original_text)}
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-danger" onclick="deleteEntry(${entry.id})">Remove</button>
+                </td>
+            </tr>
+        `).join('');
+        
+    } catch (error) {
+        tbody.innerHTML = `<tr><td colspan="3" class="text-center text-error">${error.message}</td></tr>`;
+    }
+}
+
+function formatSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function cleanseDataset() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) {
+        ui.showAlert('Please select a project first', 'warning');
+        return;
+    }
+    
+    if (!confirm('This will remove all entries without audio files. A backup will be created. Continue?')) {
+        return;
+    }
+    
+    const statusDiv = document.getElementById('cleanse-status');
+    statusDiv.classList.remove('hidden');
+    
+    try {
+        const response = await api.post(`/api/cleanse/${projectId}`);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Cleanse failed');
+        }
+        
+        const result = await response.json();
+        
+        ui.showAlert(`Dataset cleansed! Removed ${result.removed_count} entries. Kept ${result.valid_count} entries.`);
+        statusDiv.classList.add('hidden');
+        
+        // Refresh data
+        loadDatasetStats();
+        loadMissingFiles();
+        
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+        statusDiv.classList.add('hidden');
+    }
+}
+
+async function deleteEntry(entryId) {
+    if (!confirm('Remove this entry?')) return;
+    
+    const projectId = getCurrentProjectId();
+    
+    try {
+        const response = await api.delete(`/api/cleanse/${projectId}/entry/${entryId}`);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Delete failed');
+        }
+        
+        ui.showAlert('Entry removed');
+        loadDatasetStats();
+        loadMissingFiles();
+        
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+    }
+}
+
+async function downloadDataset() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) {
+        ui.showAlert('Please select a project first', 'warning');
+        return;
+    }
+    
+    window.location.href = `/api/projects/${projectId}/download`;
+}
+
+// Override project change to reload data
+const originalSelectProject = window.selectProject;
+window.selectProject = async function(projectId) {
+    if (originalSelectProject) await originalSelectProject(projectId);
+    loadDatasetStats();
+    loadMissingFiles();
+};
+</script>
+{% endblock %}
+

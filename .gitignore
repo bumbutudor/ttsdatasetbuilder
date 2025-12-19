@@ -133,3 +133,8 @@ project_*
 sample_*
 texts/
 OpenAIdoc
+whisper_model_cards/
+videos/
+texts/
+image/
+models/

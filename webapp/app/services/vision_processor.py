@@ -1,4 +1,10 @@
-"""Vision AI processor for extracting text from PDFs with OCR/Vision models."""
+"""Vision AI processor for extracting text from PDFs with OCR/Vision models.
+
+Prompts are loaded from the 'prompts/' folder in the project root.
+To modify LLM extraction prompts, edit:
+- prompts/system_tts.txt (for TTS extraction)
+- prompts/system_stt.txt (for STT extraction)
+"""
 import os
 import io
 import csv
@@ -28,20 +34,42 @@ from app.config import (
 )
 
 
-# System prompts for AI
-SYSTEM_PROMPT_TTS = """Ești un expert în transcrierea și normalizarea textului din documente pentru limba română.
+def _load_prompt_file(filename: str, fallback: str) -> str:
+    """Load prompt from prompts/ folder in project root."""
+    # Get project root (parent of webapp folder)
+    webapp_dir = Path(__file__).parent.parent.parent
+    project_root = webapp_dir.parent
+    prompts_path = project_root / "prompts" / filename
+    
+    try:
+        with open(prompts_path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+        return content if content else fallback
+    except Exception as e:
+        print(f"Warning: Could not load prompt from {prompts_path}: {e}")
+        return fallback
+
+
+# Load system prompts from files
+SYSTEM_PROMPT_TTS = _load_prompt_file(
+    "system_tts.txt",
+    """Ești un expert în transcrierea și normalizarea textului din documente pentru limba română.
 
 Returnează STRICT CSV cu separator | în format: TextBrut|TextNormalizat.
 - TextBrut: textul exact cum apare în document
 - TextNormalizat: textul pregătit pentru TTS (numerele în cuvinte, abrevieri expandate)
 NU include ID-uri sau alte coloane."""
+)
 
-SYSTEM_PROMPT_STT = """Ești un expert în transcrierea textului pentru Whisper.
+SYSTEM_PROMPT_STT = _load_prompt_file(
+    "system_stt.txt",
+    """Ești un expert în transcrierea textului pentru Whisper.
 
 Returnează STRICT CSV cu separator | în format: TextBrut|TextNormalizat.
 - TextBrut: textul exact cum apare în document  
 - TextNormalizat: textul pregătit pentru STT (păstrează numerele, corectează punctuația)
 NU include ID-uri sau alte coloane."""
+)
 
 
 def _load_image_bytes(image_path: str, max_dim: int = 1280) -> bytes:

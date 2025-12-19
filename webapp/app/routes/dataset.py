@@ -94,13 +94,23 @@ async def get_dataset(
 async def get_audio(
     project_id: int,
     filename: str,
-    current_user: User = Depends(get_current_active_user),
+    token: str = None,  # Accept token in query params for audio player
     db: Session = Depends(get_db)
 ):
     """Get an audio file from the dataset."""
+    from app.auth import get_user_from_token
+    
+    # Authenticate via token in URL
+    if not token:
+        raise HTTPException(status_code=401, detail="Token required")
+    
+    user = get_user_from_token(token, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
     project = db.query(Project).filter(
         Project.id == project_id,
-        Project.owner_id == current_user.id
+        Project.owner_id == user.id
     ).first()
     
     if not project:

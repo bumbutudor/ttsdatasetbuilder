@@ -117,7 +117,7 @@ async def cleanse_dataset(
     project_folder = Path(project.folder_path) if project.folder_path else None
     
     removed_count = 0
-    valid_count = 0
+    valid_entries = []
     
     for entry in entries:
         has_audio = False
@@ -126,21 +126,33 @@ async def cleanse_dataset(
             has_audio = audio_path.exists()
         
         if has_audio:
-            valid_count += 1
+            valid_entries.append(entry)
         else:
             db.delete(entry)
             removed_count += 1
     
     # Update project stats
-    project.total_entries = valid_count
-    project.recorded_entries = valid_count
+    project.total_entries = len(valid_entries)
+    project.recorded_entries = len(valid_entries)
     
     db.commit()
     
+    # Rewrite metadata.csv with only valid entries
+    if project_folder:
+        csv_path = project_folder / "metadata.csv"
+        try:
+            with open(csv_path, 'w', encoding='utf-8', newline='') as f:
+                for entry in valid_entries:
+                    original = entry.original_text or ""
+                    normalized = entry.normalized_text or original
+                    f.write(f"{entry.wav_filename}|{original}|{normalized}\n")
+        except Exception as e:
+            print(f"Error updating metadata.csv: {e}")
+    
     return {
-        "message": f"Removed {removed_count} entries, kept {valid_count}",
+        "message": f"Removed {removed_count} entries, kept {len(valid_entries)}",
         "removed_count": removed_count,
-        "valid_count": valid_count
+        "valid_count": len(valid_entries)
     }
 
 

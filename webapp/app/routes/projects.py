@@ -257,13 +257,23 @@ async def get_project_stats(
 @router.get("/{project_id}/download")
 async def download_dataset(
     project_id: int,
-    current_user: User = Depends(get_current_active_user),
+    token: str = None,
     db: Session = Depends(get_db)
 ):
     """Download project dataset as ZIP."""
+    from app.auth import get_user_from_token
+    
+    # Authenticate via token in URL
+    if not token:
+        raise HTTPException(status_code=401, detail="Token required")
+    
+    user = get_user_from_token(token, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
     project = db.query(Project).filter(
         Project.id == project_id,
-        Project.owner_id == current_user.id
+        Project.owner_id == user.id
     ).first()
     
     if not project:

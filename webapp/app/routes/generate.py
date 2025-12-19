@@ -86,12 +86,16 @@ def process_spacy_task(
             reader = csv_module.reader(f, delimiter='|')
             for row in reader:
                 if len(row) >= 2:
+                    # Check if audio file exists
+                    audio_file_path = os.path.join(project_folder, row[0])
+                    audio_exists = os.path.exists(audio_file_path)
+                    
                     entry = DatasetEntry(
                         project_id=project_id,
                         wav_filename=row[0],
                         original_text=row[1],
                         normalized_text=row[2] if len(row) > 2 else row[1],
-                        has_audio=False
+                        has_audio=audio_exists
                     )
                     db.add(entry)
                     entries_added += 1

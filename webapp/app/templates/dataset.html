@@ -267,7 +267,8 @@ function nextPage() {
 
 function playAudio(filename) {
     const projectId = getCurrentProjectId();
-    const audioUrl = `/api/dataset/${projectId}/audio/${filename}`;
+    const token = api.token;
+    const audioUrl = `/api/dataset/${projectId}/audio/${filename}?token=${encodeURIComponent(token)}`;
     
     document.getElementById('audio-filename').textContent = filename;
     document.getElementById('audio-player').src = audioUrl;
@@ -309,7 +310,8 @@ async function downloadDataset() {
         return;
     }
     
-    window.location.href = `/api/projects/${projectId}/download`;
+    const token = api.token;
+    window.location.href = `/api/projects/${projectId}/download?token=${encodeURIComponent(token)}`;
 }
 
 async function reloadFromCSV() {

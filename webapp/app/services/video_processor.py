@@ -227,12 +227,35 @@ def process_videos_to_dataset(
         max_dur = 10 if mode == 'TTS' else 30
     
     csv_path = os.path.join(project_folder, 'metadata.csv')
-    valid_count = 0
     
-    # Get starting index if CSV exists
+    # Find the next available index by checking existing files and CSV
+    next_index = 0
+    
+    # Check existing wav files in folder
+    import glob
+    existing_wavs = glob.glob(os.path.join(project_folder, "*.wav"))
+    for wav_file in existing_wavs:
+        filename = os.path.basename(wav_file)
+        try:
+            idx = int(filename.replace('.wav', ''))
+            next_index = max(next_index, idx + 1)
+        except ValueError:
+            pass
+    
+    # Also check CSV for highest index
     if os.path.exists(csv_path):
         with open(csv_path, 'r', encoding='utf-8') as f:
-            valid_count = sum(1 for _ in f)
+            for line in f:
+                if '|' in line:
+                    wav_name = line.split('|')[0].strip()
+                    try:
+                        idx = int(wav_name.replace('.wav', ''))
+                        next_index = max(next_index, idx + 1)
+                    except ValueError:
+                        pass
+    
+    valid_count = next_index
+    entries_added = 0  # Track how many new entries we add
     
     total_videos = len(video_paths)
     
@@ -294,6 +317,7 @@ def process_videos_to_dataset(
                             csv_file.write(f"{wav_filename}|{text}|{text}\n")
                             csv_file.flush()
                             valid_count += 1
+                            entries_added += 1
                         else:
                             # Empty transcription, delete file
                             os.remove(wav_path)
@@ -314,7 +338,7 @@ def process_videos_to_dataset(
                     os.remove(temp_audio_path)
     
     if progress_callback:
-        progress_callback(100, f"Done! {valid_count} samples generated.")
+        progress_callback(100, f"Done! Added {entries_added} new samples (total: {valid_count}).")
     
-    return valid_count, csv_path
+    return entries_added, csv_path
 

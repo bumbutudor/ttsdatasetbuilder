@@ -176,9 +176,40 @@ def process_documents_to_csv(
     
     # Filter and write to CSV
     csv_path = os.path.join(project_folder, 'metadata.csv')
-    valid_count = 0
     
-    with open(csv_path, 'w', encoding='utf-8', newline='') as csv_file:
+    # Find the next available index by checking existing files and CSV
+    import glob
+    next_index = 0
+    
+    # Check existing wav files in folder
+    existing_wavs = glob.glob(os.path.join(project_folder, "*.wav"))
+    for wav_file in existing_wavs:
+        filename = os.path.basename(wav_file)
+        try:
+            idx = int(filename.replace('.wav', ''))
+            next_index = max(next_index, idx + 1)
+        except ValueError:
+            pass
+    
+    # Also check CSV for highest index
+    if os.path.exists(csv_path):
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if '|' in line:
+                    wav_name = line.split('|')[0].strip()
+                    try:
+                        idx = int(wav_name.replace('.wav', ''))
+                        next_index = max(next_index, idx + 1)
+                    except ValueError:
+                        pass
+    
+    valid_count = next_index
+    entries_added = 0
+    
+    # Append mode if file exists, otherwise write new
+    file_mode = 'a' if os.path.exists(csv_path) else 'w'
+    
+    with open(csv_path, file_mode, encoding='utf-8', newline='') as csv_file:
         writer = csv.writer(csv_file, delimiter='|')
         
         total_sentences = len(sentences)
@@ -196,11 +227,12 @@ def process_documents_to_csv(
                 # Write: filename|original|original (normalized later)
                 writer.writerow([wav_filename, sentence, sentence])
                 valid_count += 1
+                entries_added += 1
     
     if progress_callback:
-        progress_callback(100, f"Done! {valid_count} valid sentences extracted.")
+        progress_callback(100, f"Done! Added {entries_added} sentences (total: {valid_count}).")
     
-    return valid_count, csv_path
+    return entries_added, csv_path
 
 
 def cleanse_csv(project_folder: str) -> Tuple[int, int]:

@@ -61,7 +61,7 @@ def process_videos_task(
             job.message = message
             db.commit()
         
-        valid_count, csv_path = process_videos_to_dataset(
+        entries_added, csv_path = process_videos_to_dataset(
             file_paths,
             project.folder_path,
             project.dataset_type.value,
@@ -74,13 +74,64 @@ def process_videos_task(
             silence_threshold=silence_threshold
         )
         
-        project.total_entries = valid_count
-        project.recorded_entries = valid_count  # Videos come with audio
+        # Load entries from CSV into database (append, don't delete)
+        job.message = "Saving entries to database..."
+        db.commit()
+        
+        import csv as csv_module
+        import os
+        from app.models import DatasetEntry
+        
+        csv_path = os.path.join(project.folder_path, 'metadata.csv')
+        
+        if os.path.exists(csv_path):
+            # Get existing wav_filenames to avoid duplicates
+            existing_filenames = set(
+                entry.wav_filename for entry in 
+                db.query(DatasetEntry.wav_filename).filter(DatasetEntry.project_id == project_id).all()
+            )
+            
+            # Read CSV and insert only NEW entries
+            db_entries_added = 0
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv_module.reader(f, delimiter='|')
+                for row in reader:
+                    if len(row) >= 2:
+                        wav_filename = row[0]
+                        # Skip if already in database
+                        if wav_filename in existing_filenames:
+                            continue
+                        
+                        # Check if audio file exists
+                        audio_file_path = os.path.join(project.folder_path, wav_filename)
+                        audio_exists = os.path.exists(audio_file_path)
+                        
+                        entry = DatasetEntry(
+                            project_id=project_id,
+                            wav_filename=wav_filename,
+                            original_text=row[1],
+                            normalized_text=row[2] if len(row) > 2 else row[1],
+                            has_audio=audio_exists
+                        )
+                        db.add(entry)
+                        db_entries_added += 1
+            
+            db.commit()
+        
+        # Update project counts
+        total_entries = db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).count()
+        recorded_entries = db.query(DatasetEntry).filter(
+            DatasetEntry.project_id == project_id,
+            DatasetEntry.has_audio == True
+        ).count()
+        
+        project.total_entries = total_entries
+        project.recorded_entries = recorded_entries
         
         job.status = ProjectStatus.COMPLETED
         job.progress = 100
         job.completed_at = datetime.utcnow()
-        job.message = f"Processed {valid_count} segments"
+        job.message = f"Added {entries_added} segments (total: {total_entries})"
         db.commit()
         
     except Exception as e:

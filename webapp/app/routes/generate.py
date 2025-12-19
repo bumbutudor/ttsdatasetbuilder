@@ -69,30 +69,37 @@ def process_spacy_task(
             min_words=settings.get('min_words', 5)
         )
         
-        # Load entries from CSV into database
+        # Load entries from CSV into database (append, don't delete existing)
         job.message = "Saving entries to database..."
         db.commit()
         
         import csv as csv_module
         from app.models import DatasetEntry
         
-        # Clear existing entries for this project
-        db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).delete()
-        db.commit()
+        # Get existing wav_filenames to avoid duplicates
+        existing_filenames = set(
+            entry.wav_filename for entry in 
+            db.query(DatasetEntry.wav_filename).filter(DatasetEntry.project_id == project_id).all()
+        )
         
-        # Read CSV and insert entries
+        # Read CSV and insert only NEW entries
         entries_added = 0
         with open(csv_path, 'r', encoding='utf-8') as f:
             reader = csv_module.reader(f, delimiter='|')
             for row in reader:
                 if len(row) >= 2:
+                    wav_filename = row[0]
+                    # Skip if already in database
+                    if wav_filename in existing_filenames:
+                        continue
+                    
                     # Check if audio file exists
-                    audio_file_path = os.path.join(project_folder, row[0])
+                    audio_file_path = os.path.join(project_folder, wav_filename)
                     audio_exists = os.path.exists(audio_file_path)
                     
                     entry = DatasetEntry(
                         project_id=project_id,
-                        wav_filename=row[0],
+                        wav_filename=wav_filename,
                         original_text=row[1],
                         normalized_text=row[2] if len(row) > 2 else row[1],
                         has_audio=audio_exists
@@ -102,12 +109,14 @@ def process_spacy_task(
         
         db.commit()
         
-        project.total_entries = entries_added
+        # Update project total count
+        total_entries = db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).count()
+        project.total_entries = total_entries
         
         job.status = ProjectStatus.COMPLETED
         job.progress = 100
         job.completed_at = datetime.utcnow()
-        job.message = f"Extracted {entries_added} sentences and saved to database"
+        job.message = f"Added {entries_added} new sentences (total: {total_entries})"
         db.commit()
         
     except Exception as e:
@@ -176,7 +185,7 @@ def process_vision_task(
             )
             total_valid += valid_count
         
-        # Load entries from CSV into database
+        # Load entries from CSV into database (append, don't delete existing)
         job.message = "Saving entries to database..."
         db.commit()
         
@@ -186,35 +195,47 @@ def process_vision_task(
         csv_path = os.path.join(project_folder, 'metadata.csv')
         
         if os.path.exists(csv_path):
-            # Clear existing entries for this project
-            db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).delete()
-            db.commit()
+            # Get existing wav_filenames to avoid duplicates
+            existing_filenames = set(
+                entry.wav_filename for entry in 
+                db.query(DatasetEntry.wav_filename).filter(DatasetEntry.project_id == project_id).all()
+            )
             
-            # Read CSV and insert entries
+            # Read CSV and insert only NEW entries
             entries_added = 0
             with open(csv_path, 'r', encoding='utf-8') as f:
                 reader = csv_module.reader(f, delimiter='|')
                 for row in reader:
                     if len(row) >= 2:
+                        wav_filename = row[0]
+                        # Skip if already in database
+                        if wav_filename in existing_filenames:
+                            continue
+                        
+                        # Check if audio file exists
+                        audio_file_path = os.path.join(project_folder, wav_filename)
+                        audio_exists = os.path.exists(audio_file_path)
+                        
                         entry = DatasetEntry(
                             project_id=project_id,
-                            wav_filename=row[0],
+                            wav_filename=wav_filename,
                             original_text=row[1],
                             normalized_text=row[2] if len(row) > 2 else row[1],
-                            has_audio=False
+                            has_audio=audio_exists
                         )
                         db.add(entry)
                         entries_added += 1
             
             db.commit()
-            total_valid = entries_added
         
-        project.total_entries = total_valid
+        # Update project total count
+        total_entries = db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).count()
+        project.total_entries = total_entries
         
         job.status = ProjectStatus.COMPLETED
         job.progress = 100
         job.completed_at = datetime.utcnow()
-        job.message = f"Extracted {total_valid} segments with Vision AI"
+        job.message = f"Added {entries_added} new segments with Vision AI (total: {total_entries})"
         db.commit()
         
     except Exception as e:

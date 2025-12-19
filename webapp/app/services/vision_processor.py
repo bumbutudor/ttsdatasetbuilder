@@ -138,11 +138,12 @@ def iter_pdf_page_images(
     )
 
 
-def process_image_with_ollama(image_path: str, mode: str) -> str:
+def process_image_with_ollama(image_path: str, mode: str, model: Optional[str] = None) -> str:
     """Send image to Ollama and get CSV response."""
     import ollama
     
     system_prompt = SYSTEM_PROMPT_TTS if mode == "TTS" else SYSTEM_PROMPT_STT
+    model_name = model or OLLAMA_MODEL_NAME
     
     user_message = (
         "Analizează această imagine și extrage TOT textul relevant. "
@@ -154,7 +155,7 @@ def process_image_with_ollama(image_path: str, mode: str) -> str:
         image_bytes = _load_image_bytes(image_path, max_dim=1280)
         
         response = ollama.chat(
-            model=OLLAMA_MODEL_NAME,
+            model=model_name,
             messages=[
                 {'role': 'system', 'content': system_prompt},
                 {'role': 'user', 'content': user_message, 'images': [image_bytes]}
@@ -162,14 +163,17 @@ def process_image_with_ollama(image_path: str, mode: str) -> str:
         )
         return response['message']['content']
     except Exception as e:
+        print(f"Ollama error: {e}")
         return ""
 
 
-def process_image_with_openai(image_path: str, mode: str) -> str:
+def process_image_with_openai(image_path: str, mode: str, model: Optional[str] = None, api_key: Optional[str] = None) -> str:
     """Send image to OpenAI and get CSV response."""
     from openai import OpenAI
     
     system_prompt = SYSTEM_PROMPT_TTS if mode == "TTS" else SYSTEM_PROMPT_STT
+    model_name = model or OPENAI_MODEL_NAME
+    key = api_key or OPENAI_API_KEY
     
     user_message = (
         "Analizează această imagine și extrage TOT textul relevant. "
@@ -178,11 +182,11 @@ def process_image_with_openai(image_path: str, mode: str) -> str:
     )
     
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        client = OpenAI(api_key=key)
         base64_image = _encode_image_to_base64(image_path)
         
         response = client.chat.completions.create(
-            model=OPENAI_MODEL_NAME,
+            model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {
@@ -200,14 +204,16 @@ def process_image_with_openai(image_path: str, mode: str) -> str:
         )
         return response.choices[0].message.content
     except Exception as e:
+        print(f"OpenAI error: {e}")
         return ""
 
 
-def process_image(image_path: str, mode: str) -> str:
+def process_image(image_path: str, mode: str, provider: Optional[str] = None, model: Optional[str] = None, api_key: Optional[str] = None) -> str:
     """Process image with configured AI provider."""
-    if AI_PROVIDER == "openai":
-        return process_image_with_openai(image_path, mode)
-    return process_image_with_ollama(image_path, mode)
+    use_provider = provider or AI_PROVIDER
+    if use_provider == "openai":
+        return process_image_with_openai(image_path, mode, model, api_key)
+    return process_image_with_ollama(image_path, mode, model)
 
 
 def parse_ai_response(response_text: str) -> List[Tuple[str, str]]:
@@ -259,7 +265,10 @@ def process_pdf_with_vision(
     pdf_path: str,
     project_folder: str,
     mode: str,
-    progress_callback: Optional[Callable[[int, str], None]] = None
+    progress_callback: Optional[Callable[[int, str], None]] = None,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None
 ) -> Tuple[int, str]:
     """
     Process PDF with Vision AI and create dataset.
@@ -269,6 +278,9 @@ def process_pdf_with_vision(
         project_folder: Destination folder for the project
         mode: 'TTS' or 'STT'
         progress_callback: Optional callback for progress updates
+        provider: AI provider ('ollama' or 'openai'), defaults to config
+        model: Model name to use, defaults to config
+        api_key: API key for OpenAI, defaults to config
     
     Returns:
         Tuple of (valid_count, csv_path)
@@ -308,7 +320,7 @@ def process_pdf_with_vision(
                 )
             
             # Process with Vision AI
-            response_text = process_image(img_path, mode)
+            response_text = process_image(img_path, mode, provider, model, api_key)
             rows = parse_ai_response(response_text)
             
             # Write rows to CSV

@@ -3,7 +3,7 @@
  */
 
 // ============== API Helper ==============
-const api = {
+window.api = {
     token: localStorage.getItem('token'),
     
     async request(endpoint, options = {}) {
@@ -89,7 +89,7 @@ const api = {
 };
 
 // ============== UI Helpers ==============
-const ui = {
+window.ui = {
     showAlert(message, type = 'success') {
         const alertDiv = document.createElement('div');
         alertDiv.className = `alert alert-${type} fade-in`;
@@ -148,7 +148,7 @@ function setCurrentProjectId(projectId) {
     localStorage.setItem('currentProjectId', projectId);
 }
 
-async function loadProjectSelector() {
+window.loadProjectSelector = async function() {
     const selector = document.getElementById('project-selector');
     if (!selector) return;
     
@@ -186,7 +186,7 @@ async function loadProjectSelector() {
     }
 }
 
-async function selectProject(projectId) {
+window.selectProject = async function(projectId) {
     if (!projectId) return;
     
     setCurrentProjectId(projectId);

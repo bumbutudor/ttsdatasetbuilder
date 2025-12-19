@@ -134,6 +134,8 @@ async def delete_project(
     db: Session = Depends(get_db)
 ):
     """Delete a project and all its data."""
+    from app.models import ProcessingJob, ProjectSettings
+    
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id
@@ -150,6 +152,10 @@ async def delete_project(
     upload_folder = UPLOAD_DIR / f"project_{project_id}"
     if upload_folder.exists():
         shutil.rmtree(upload_folder)
+    
+    # Delete related records (ProcessingJobs, ProjectSettings)
+    db.query(ProcessingJob).filter(ProcessingJob.project_id == project_id).delete()
+    db.query(ProjectSettings).filter(ProjectSettings.project_id == project_id).delete()
     
     db.delete(project)
     db.commit()

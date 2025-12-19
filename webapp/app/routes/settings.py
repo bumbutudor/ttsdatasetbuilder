@@ -3,8 +3,10 @@ from typing import Optional, List
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+import json
 
 from app.database import get_db
 from app.auth import get_current_active_user
@@ -46,6 +48,116 @@ async def get_available_whisper_models(
     models.extend(HUGGINGFACE_WHISPER_MODELS)
     
     return {"models": models}
+
+
+class OllamaModelCheck(BaseModel):
+    model: str
+
+
+@router.post("/ollama/check")
+async def check_ollama_model(
+    request: OllamaModelCheck,
+    current_user: User = Depends(get_current_active_user)
+):
+    """Check if an Ollama model exists locally."""
+    try:
+        import ollama
+        
+        model_name = request.model
+        
+        # List local models
+        try:
+            local_models = ollama.list()
+            
+            # Handle both dict and object response formats
+            models_list = local_models.get('models', []) if isinstance(local_models, dict) else getattr(local_models, 'models', [])
+            
+            # Extract model names - handle both dict and Model object
+            full_model_names = []
+            for m in models_list:
+                if isinstance(m, dict):
+                    name = m.get('name', '') or m.get('model', '')
+                else:
+                    # It's a Model object
+                    name = getattr(m, 'model', '') or getattr(m, 'name', '')
+                if name:
+                    full_model_names.append(name)
+            
+            # Check if model exists (with or without tag)
+            model_base = model_name.split(':')[0]
+            exists = model_name in full_model_names or any(
+                m == model_name or m.startswith(model_base + ':') or m.split(':')[0] == model_base
+                for m in full_model_names
+            )
+            
+            return {
+                "exists": exists,
+                "model": model_name,
+                "available_models": full_model_names
+            }
+        except Exception as e:
+            return {
+                "exists": False,
+                "model": model_name,
+                "error": f"Could not connect to Ollama: {str(e)}"
+            }
+            
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Ollama library not installed")
+
+
+@router.get("/ollama/pull/{model_name:path}")
+async def pull_ollama_model(
+    model_name: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """Pull (download) an Ollama model with streaming progress."""
+    try:
+        import ollama
+        
+        def generate_progress():
+            """Generator that yields SSE events with download progress."""
+            try:
+                # Use ollama.pull with stream=True
+                stream = ollama.pull(model_name, stream=True)
+                
+                for chunk in stream:
+                    status = chunk.get('status', '')
+                    total = chunk.get('total', 0)
+                    completed = chunk.get('completed', 0)
+                    
+                    progress = 0
+                    if total > 0:
+                        progress = int((completed / total) * 100)
+                    
+                    event_data = {
+                        "status": status,
+                        "progress": progress,
+                        "completed": completed,
+                        "total": total
+                    }
+                    
+                    yield f"data: {json.dumps(event_data)}\n\n"
+                
+                # Final success message
+                yield f"data: {json.dumps({'status': 'success', 'progress': 100, 'message': 'Model downloaded successfully!'})}\n\n"
+                
+            except Exception as e:
+                error_msg = str(e)
+                yield f"data: {json.dumps({'status': 'error', 'message': error_msg})}\n\n"
+        
+        return StreamingResponse(
+            generate_progress(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+        
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Ollama library not installed")
 
 
 class SettingsUpdate(BaseModel):

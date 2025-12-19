@@ -111,11 +111,21 @@ const ui = {
     },
     
     showModal(id) {
-        document.getElementById(id)?.classList.add('active');
+        const modal = document.getElementById(id);
+        console.log('showModal called with id:', id, 'element found:', modal);
+        if (modal) {
+            modal.classList.add('active');
+            console.log('Modal classes after add:', modal.classList.toString());
+        } else {
+            console.error('Modal element not found:', id);
+        }
     },
     
     hideModal(id) {
-        document.getElementById(id)?.classList.remove('active');
+        const modal = document.getElementById(id);
+        if (modal) {
+            modal.classList.remove('active');
+        }
     },
     
     showLoading(button) {

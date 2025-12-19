@@ -68,6 +68,41 @@
     <p class="text-muted mt-md" id="processing-message">Starting...</p>
 </div>
 
+<!-- Model Download Modal -->
+<div id="model-download-modal" class="modal">
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+            <h3>🔽 Model Not Found</h3>
+            <button class="modal-close" onclick="closeModelModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="model-download-message" class="mb-lg">
+                The model <strong id="missing-model-name"></strong> is not available locally.
+            </p>
+            <p class="text-muted mb-lg">Would you like to download it now? This may take a few minutes depending on the model size.</p>
+            
+            <div id="download-progress-container" class="hidden">
+                <div class="progress mb-md">
+                    <div class="progress-bar" id="download-progress-bar" style="width: 0%"></div>
+                </div>
+                <p class="text-muted text-center" id="download-status">Preparing download...</p>
+            </div>
+            
+            <div id="download-buttons" class="flex gap-md justify-center mt-lg">
+                <button class="btn btn-secondary" onclick="closeModelModal()">Cancel</button>
+                <button class="btn btn-primary" id="start-download-btn" onclick="startModelDownload()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    Download Model
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Method Info -->
 <div id="method-info" class="card">
     <h4>About Spacy Extraction</h4>
@@ -90,6 +125,7 @@
 {% block scripts %}
 <script>
 let selectedFiles = new Set();
+let pendingModelName = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     if (!api.isAuthenticated()) {
@@ -100,6 +136,129 @@ document.addEventListener('DOMContentLoaded', () => {
     loadProjectSelector();
     loadSettings();
 });
+
+function closeModelModal() {
+    document.getElementById('model-download-modal').classList.remove('active');
+    pendingModelName = null;
+}
+
+function showModelDownloadDialog(modelName) {
+    pendingModelName = modelName;
+    document.getElementById('missing-model-name').textContent = modelName;
+    document.getElementById('download-progress-container').classList.add('hidden');
+    document.getElementById('download-buttons').classList.remove('hidden');
+    document.getElementById('start-download-btn').disabled = false;
+    document.getElementById('model-download-modal').classList.add('active');
+}
+
+async function startModelDownload() {
+    if (!pendingModelName) return;
+    
+    const progressContainer = document.getElementById('download-progress-container');
+    const progressBar = document.getElementById('download-progress-bar');
+    const statusText = document.getElementById('download-status');
+    const downloadBtn = document.getElementById('start-download-btn');
+    const buttonsContainer = document.getElementById('download-buttons');
+    
+    // Show progress, hide buttons
+    progressContainer.classList.remove('hidden');
+    downloadBtn.disabled = true;
+    downloadBtn.innerHTML = '<span class="spinner"></span> Downloading...';
+    
+    try {
+        const token = api.token;
+        const response = await fetch(`/api/settings/ollama/pull/${encodeURIComponent(pendingModelName)}`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to start download');
+        }
+        
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const text = decoder.decode(value);
+            const lines = text.split('\n');
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.substring(6));
+                        
+                        if (data.status === 'error') {
+                            throw new Error(data.message);
+                        }
+                        
+                        if (data.status === 'success') {
+                            progressBar.style.width = '100%';
+                            statusText.textContent = '✓ Model downloaded successfully!';
+                            ui.showAlert('Model downloaded successfully! You can now generate CSV.', 'success');
+                            
+                            setTimeout(() => {
+                                closeModelModal();
+                            }, 1500);
+                            return;
+                        }
+                        
+                        // Update progress
+                        progressBar.style.width = `${data.progress}%`;
+                        
+                        let statusMessage = data.status;
+                        if (data.total > 0) {
+                            const completedMB = (data.completed / (1024 * 1024)).toFixed(1);
+                            const totalMB = (data.total / (1024 * 1024)).toFixed(1);
+                            statusMessage = `${data.status} - ${completedMB} / ${totalMB} MB (${data.progress}%)`;
+                        }
+                        statusText.textContent = statusMessage;
+                        
+                    } catch (e) {
+                        if (e.message !== 'Unexpected end of JSON input') {
+                            console.error('Parse error:', e);
+                        }
+                    }
+                }
+            }
+        }
+        
+    } catch (error) {
+        console.error('Download error:', error);
+        statusText.textContent = `❌ Error: ${error.message}`;
+        progressBar.style.width = '0%';
+        progressBar.style.backgroundColor = 'var(--danger)';
+        
+        // Re-enable download button
+        downloadBtn.disabled = false;
+        downloadBtn.innerHTML = `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Retry Download
+        `;
+    }
+}
+
+async function checkOllamaModel(modelName) {
+    try {
+        const response = await api.post('/api/settings/ollama/check', { model: modelName });
+        if (!response.ok) {
+            throw new Error('Failed to check model');
+        }
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Model check error:', error);
+        return { exists: false, error: error.message };
+    }
+}
 
 function updateMethodInfo() {
     const method = document.querySelector('input[name="extraction_method"]:checked').value;
@@ -267,6 +426,44 @@ async function startGeneration() {
     const method = document.querySelector('input[name="extraction_method"]:checked').value;
     const files = Array.from(selectedFiles);
     
+    // Check if Vision LLM and Ollama provider - verify model exists
+    if (method === 'vision') {
+        try {
+            // Get current settings
+            const settingsResponse = await api.get(`/api/settings/${projectId}`);
+            if (settingsResponse.ok) {
+                const settings = await settingsResponse.json();
+                
+                if (settings.ai_provider === 'ollama') {
+                    const modelName = settings.ollama_model || 'gemma3:4b';
+                    
+                    ui.showAlert('Checking if Ollama model is available...', 'info');
+                    
+                    const modelCheck = await checkOllamaModel(modelName);
+                    
+                    if (!modelCheck.exists) {
+                        if (modelCheck.error && modelCheck.error.includes('Could not connect')) {
+                            ui.showAlert('Could not connect to Ollama. Make sure Ollama is running.', 'error');
+                            return;
+                        }
+                        
+                        // Model not found - show download dialog
+                        showModelDownloadDialog(modelName);
+                        return;
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Settings check error:', error);
+            // Continue anyway if settings check fails
+        }
+    }
+    
+    proceedWithGeneration(method, files);
+}
+
+async function proceedWithGeneration(method, files) {
+    const projectId = getCurrentProjectId();
     const statusDiv = document.getElementById('processing-status');
     statusDiv.classList.remove('hidden');
     

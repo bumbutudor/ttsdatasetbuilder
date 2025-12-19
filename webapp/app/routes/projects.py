@@ -135,32 +135,57 @@ async def delete_project(
 ):
     """Delete a project and all its data."""
     from app.models import ProcessingJob, ProjectSettings
+    import logging
     
-    project = db.query(Project).filter(
-        Project.id == project_id,
-        Project.owner_id == current_user.id
-    ).first()
+    logger = logging.getLogger(__name__)
     
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    
-    # Delete project folder
-    if project.folder_path and os.path.exists(project.folder_path):
-        shutil.rmtree(project.folder_path)
-    
-    # Delete upload folder
-    upload_folder = UPLOAD_DIR / f"project_{project_id}"
-    if upload_folder.exists():
-        shutil.rmtree(upload_folder)
-    
-    # Delete related records (ProcessingJobs, ProjectSettings)
-    db.query(ProcessingJob).filter(ProcessingJob.project_id == project_id).delete()
-    db.query(ProjectSettings).filter(ProjectSettings.project_id == project_id).delete()
-    
-    db.delete(project)
-    db.commit()
-    
-    return {"message": "Project deleted successfully"}
+    try:
+        project = db.query(Project).filter(
+            Project.id == project_id,
+            Project.owner_id == current_user.id
+        ).first()
+        
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        logger.info(f"Deleting project {project_id}: {project.name}")
+        
+        # Delete project folder
+        if project.folder_path and os.path.exists(project.folder_path):
+            logger.info(f"Deleting folder: {project.folder_path}")
+            shutil.rmtree(project.folder_path, ignore_errors=True)
+        
+        # Delete upload folder
+        upload_folder = UPLOAD_DIR / f"project_{project_id}"
+        if upload_folder.exists():
+            logger.info(f"Deleting upload folder: {upload_folder}")
+            shutil.rmtree(upload_folder, ignore_errors=True)
+        
+        # Delete related records (ProcessingJobs, ProjectSettings)
+        logger.info("Deleting ProcessingJobs and ProjectSettings")
+        db.query(ProcessingJob).filter(ProcessingJob.project_id == project_id).delete(synchronize_session=False)
+        db.query(ProjectSettings).filter(ProjectSettings.project_id == project_id).delete(synchronize_session=False)
+        
+        # Delete dataset entries explicitly first
+        logger.info("Deleting DatasetEntries")
+        db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).delete(synchronize_session=False)
+        
+        logger.info("Deleting project record")
+        db.delete(project)
+        db.commit()
+        
+        logger.info(f"Project {project_id} deleted successfully")
+        return {"message": "Project deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"ERROR deleting project {project_id}: {str(e)}")
+        print(error_trace)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting project: {str(e)}")
 
 
 @router.get("/{project_id}/entries", response_model=DatasetEntryListResponse)

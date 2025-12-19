@@ -61,6 +61,10 @@
 {% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('Dashboard loaded');
+    console.log('ui object:', typeof ui, ui);
+    console.log('Modal element:', document.getElementById('create-project-modal'));
+    
     if (!api.isAuthenticated()) {
         window.location.href = '/login';
         return;

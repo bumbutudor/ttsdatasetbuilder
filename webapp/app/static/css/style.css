@@ -701,7 +701,10 @@ input[type="range"]:focus::-webkit-slider-thumb {
     visibility: visible;
 }
 
-.modal {
+/* Modal content - supports both .modal and .modal-content as child */
+.modal-overlay > .modal,
+.modal-overlay > .modal-content,
+.modal.active > .modal-content {
     background: var(--color-bg-secondary);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: var(--radius-xl);
@@ -714,8 +717,32 @@ input[type="range"]:focus::-webkit-slider-thumb {
     transition: transform 0.3s ease;
 }
 
-.modal-overlay.active .modal {
+.modal-overlay.active > .modal,
+.modal-overlay.active > .modal-content,
+.modal.active > .modal-content {
     transform: translateY(0);
+}
+
+/* Standalone modal (used for download dialogs etc.) */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+}
+
+.modal.active {
+    opacity: 1;
+    visibility: visible;
 }
 
 .modal-header {
@@ -1024,6 +1051,7 @@ input[type="range"]:focus::-webkit-slider-thumb {
 .flex { display: flex; }
 .flex-between { justify-content: space-between; }
 .flex-center { justify-content: center; align-items: center; }
+.justify-center { justify-content: center; }
 .items-center { align-items: center; }
 .gap-sm { gap: var(--space-sm); }
 .gap-md { gap: var(--space-md); }

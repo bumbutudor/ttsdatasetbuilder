@@ -41,11 +41,6 @@
             Select a project to start recording
         </div>
         
-        <!-- Waveform -->
-        <div class="waveform-container" id="waveform">
-            <canvas id="waveform-canvas" width="600" height="80"></canvas>
-        </div>
-        
         <!-- Recording Timer -->
         <div class="text-center mb-lg">
             <span class="text-muted">Duration: </span>
@@ -163,8 +158,6 @@ let durationInterval = null;
 let currentSentenceIndex = 0;
 let sentences = [];
 let audioContext = null;
-let analyser = null;
-let dataArray = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     if (!api.isAuthenticated()) {
@@ -312,16 +305,8 @@ async function startRecording() {
             }
         });
         
-        // Setup audio context for visualization
+        // Setup audio context
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        analyser = audioContext.createAnalyser();
-        const source = audioContext.createMediaStreamSource(stream);
-        source.connect(analyser);
-        analyser.fftSize = 256;
-        dataArray = new Uint8Array(analyser.frequencyBinCount);
-        
-        // Start visualization
-        visualize();
         
         mediaRecorder = new MediaRecorder(stream);
         audioChunks = [];
@@ -383,34 +368,6 @@ function updateDuration() {
     const seconds = Math.floor(elapsed % 60);
     document.getElementById('recording-duration').textContent = 
         `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
-
-function visualize() {
-    if (!analyser || !isRecording) return;
-    
-    const canvas = document.getElementById('waveform-canvas');
-    const ctx = canvas.getContext('2d');
-    
-    analyser.getByteFrequencyData(dataArray);
-    
-    ctx.fillStyle = 'rgb(30, 41, 59)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    const barWidth = (canvas.width / dataArray.length) * 2;
-    let x = 0;
-    
-    for (let i = 0; i < dataArray.length; i++) {
-        const barHeight = (dataArray[i] / 255) * canvas.height;
-        
-        ctx.fillStyle = `rgb(16, 185, ${129 + dataArray[i] / 2})`;
-        ctx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
-        
-        x += barWidth;
-    }
-    
-    if (isRecording) {
-        requestAnimationFrame(visualize);
-    }
 }
 
 let currentPlayback = null;

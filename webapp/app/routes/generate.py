@@ -58,6 +58,10 @@ def process_spacy_task(
         
         # Import here to avoid circular imports
         from app.services.document_processor import process_documents_to_csv
+        from app.models import DatasetEntry
+        
+        # Get the current highest index from database to continue from there
+        existing_count = db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).count()
         
         valid_count, csv_path = process_documents_to_csv(
             file_paths,
@@ -66,7 +70,8 @@ def process_spacy_task(
             progress_callback,
             min_len=settings.get('min_sentence_length', 30),
             max_len=settings.get('max_sentence_length', 100),
-            min_words=settings.get('min_words', 5)
+            min_words=settings.get('min_words', 5),
+            start_index=existing_count
         )
         
         # Load entries from CSV into database (append, don't delete existing)

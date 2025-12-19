@@ -133,7 +133,8 @@ def process_documents_to_csv(
     progress_callback: Optional[Callable[[int, str], None]] = None,
     min_len: int = None,
     max_len: int = None,
-    min_words: int = None
+    min_words: int = None,
+    start_index: int = None
 ) -> Tuple[int, str]:
     """
     Process document files and generate metadata.csv.
@@ -146,6 +147,7 @@ def process_documents_to_csv(
         min_len: Minimum sentence length (chars)
         max_len: Maximum sentence length (chars)
         min_words: Minimum words per sentence
+        start_index: Starting index for wav filenames (from database count)
     
     Returns:
         Tuple of (valid_count, csv_path)
@@ -177,11 +179,11 @@ def process_documents_to_csv(
     # Filter and write to CSV
     csv_path = os.path.join(project_folder, 'metadata.csv')
     
-    # Find the next available index by checking existing files and CSV
+    # Find the next available index
     import glob
-    next_index = 0
+    next_index = start_index if start_index is not None else 0
     
-    # Check existing wav files in folder
+    # Also check existing wav files in folder (in case files exist without DB entries)
     existing_wavs = glob.glob(os.path.join(project_folder, "*.wav"))
     for wav_file in existing_wavs:
         filename = os.path.basename(wav_file)

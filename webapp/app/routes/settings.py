@@ -8,12 +8,16 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import json
 import os
+import logging
 
 from app.database import get_db
 from app.auth import get_current_active_user
 from app.models import User, Project, ProjectSettings
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
+
+# Logger for this module
+logger = logging.getLogger(__name__)
 
 
 # HuggingFace models that are known to work well
@@ -125,17 +129,34 @@ async def pull_ollama_model(
         def generate_progress():
             """Generator that yields SSE events with download progress."""
             try:
+                logger.info(f"Starting pull for model: {model_name} from {ollama_host}")
                 # Use client.pull with stream=True
                 stream = client.pull(model_name, stream=True)
 
                 for chunk in stream:
-                    status = chunk.get('status', '')
-                    total = chunk.get('total', 0)
-                    completed = chunk.get('completed', 0)
+                    # FIX: Handle both dict and Object responses from Ollama lib
+                    if hasattr(chunk, 'model_dump'):
+                        # Pydantic v2 objects
+                        data = chunk.model_dump()
+                    elif hasattr(chunk, '__dict__'):
+                        # Standard objects
+                        data = chunk.__dict__
+                    elif isinstance(chunk, dict):
+                        # Dictionary
+                        data = chunk
+                    else:
+                        data = {}
+
+                    status = data.get('status', '')
+                    total = data.get('total', 0)
+                    completed = data.get('completed', 0)
 
                     progress = 0
-                    if total > 0:
-                        progress = int((completed / total) * 100)
+                    if total and total > 0:
+                        try:
+                            progress = int((completed / total) * 100)
+                        except Exception:
+                            progress = 0
 
                     event_data = {
                         "status": status,
@@ -143,13 +164,19 @@ async def pull_ollama_model(
                         "completed": completed,
                         "total": total
                     }
+                    
+                    # Log progress occasionally to Docker logs to debug
+                    if progress > 0 and progress % 10 == 0:
+                         logger.info(f"Pulling {model_name}: {progress}% - {status}")
 
                     yield f"data: {json.dumps(event_data)}\n\n"
 
                 # Final success message
+                logger.info(f"Model {model_name} pull completed.")
                 yield f"data: {json.dumps({'status': 'success', 'progress': 100, 'message': 'Model downloaded successfully!'})}\n\n"
 
             except Exception as e:
+                logger.error(f"Error pulling model: {str(e)}")
                 error_msg = str(e)
                 yield f"data: {json.dumps({'status': 'error', 'message': error_msg})}\n\n"
         

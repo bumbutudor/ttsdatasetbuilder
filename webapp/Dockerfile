@@ -1,32 +1,37 @@
-# TTS/STT Dataset Builder - Docker Image (Optimized)
+# TTS/STT Dataset Builder - GPU Version
 FROM python:3.11-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
-ENV PIP_NO_CACHE_DIR=1
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_NO_CACHE_DIR=0
 
 # Install system dependencies
+# Adăugăm poppler-utils pentru pdf2image și git
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ffmpeg \
     libsndfile1 \
     libportaudio2 \
+    poppler-utils \
     git \
+    curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
 # Create app directory
 WORKDIR /app
 
-# Copy requirements first for better caching
-COPY requirements-docker.txt ./requirements.txt
+# Copy requirements
+COPY requirements.txt ./
 
-# Install Python dependencies (CPU-only PyTorch is ~200MB vs 900MB GPU)
+# Install Python dependencies
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
+
+# Download Spacy Romanian Model (CRITIC PENTRU TEXT)
+RUN python -m spacy download ro_core_news_lg
 
 # Copy application code
 COPY app/ ./app/

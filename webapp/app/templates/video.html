@@ -4,6 +4,47 @@
 {% block title %}Video to Dataset - Dataset Builder{% endblock %}
 
 {% block content %}
+<style>
+    /* Stiluri specifice pentru tabelul de transcriere */
+    #transcripts-tbody td {
+        vertical-align: top; /* Aliniem elementele sus */
+        padding: 15px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    /* Stilul pentru textarea */
+    .transcript-editor {
+        width: 100%;
+        min-height: 90px;      /* Înălțime minimă mai mare */
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        padding: 12px;
+        color: #f1f5f9;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.95rem;
+        line-height: 1.6;
+        resize: vertical;      /* Permite utilizatorului să tragă de colț */
+        overflow: hidden;      /* Ascunde bara de scroll (folosim auto-grow) */
+        transition: border-color 0.2s, background 0.2s;
+    }
+
+    .transcript-editor:focus {
+        outline: none;
+        border-color: var(--color-accent);
+        background: rgba(0, 0, 0, 0.3);
+        box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.1);
+    }
+
+    /* Ajustare pentru coloana de acțiuni */
+    .action-col {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100%;
+        padding-top: 10px;
+    }
+</style>
 <div class="page-header">
     <h1>🎬 Video to Dataset (Workflow)</h1>
     <p>Split video audio, review segments, transcribe, and add to dataset.</p>
@@ -343,18 +384,53 @@ async function loadTranscriptReview() {
     transcriptsData = data.results;
     renderTranscripts();
 }
-
 function renderTranscripts() {
     const tbody = document.getElementById('transcripts-tbody');
+    
+    if (transcriptsData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted p-lg">No transcriptions available.</td></tr>';
+        return;
+    }
+
     tbody.innerHTML = transcriptsData.map((t, idx) => `
-        <tr id="row-${idx}">
-            <td><audio src="/api/video/${getCurrentProjectId()}/staging/${currentStagingId}/audio/${t.filename}" style="width: 100px" controls></audio></td>
-            <td>
-                <textarea class="form-control" onchange="transcriptsData[${idx}].text = this.value">${t.text}</textarea>
+        <tr id="row-${idx}" class="fade-in">
+            <td width="200">
+                <!-- Audio Player mai compact -->
+                <audio src="/api/video/${getCurrentProjectId()}/staging/${currentStagingId}/audio/${t.filename}" 
+                       controls 
+                       style="width: 100%; height: 40px; margin-top: 5px;"></audio>
+                <div class="text-muted text-small mt-sm text-center">${t.filename}</div>
             </td>
-            <td><button class="btn btn-sm btn-danger" onclick="removeTranscript(${idx})">Remove</button></td>
+            <td>
+                <textarea class="form-control transcript-editor" 
+                          id="tx-${idx}"
+                          oninput="autoResize(this); transcriptsData[${idx}].text = this.value"
+                >${t.text}</textarea>
+            </td>
+            <td width="100">
+                <div class="action-col">
+                    <button class="btn btn-sm btn-danger" onclick="removeTranscript(${idx})" title="Remove segment">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 6h18"></path>
+                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+            </td>
         </tr>
     `).join('');
+
+    // Ajustează automat înălțimea pentru toate textarea-urile după randare
+    setTimeout(() => {
+        document.querySelectorAll('.transcript-editor').forEach(el => autoResize(el));
+    }, 100);
+}
+
+// Funcție helper pentru auto-redimensionare
+function autoResize(element) {
+    element.style.height = 'auto'; // Resetăm înălțimea pentru a calcula corect
+    element.style.height = (element.scrollHeight + 2) + 'px'; // Setăm înălțimea la conținut
 }
 
 function removeTranscript(idx) {

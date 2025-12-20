@@ -62,19 +62,23 @@ def _load_whisper_model(model_name: str = None):
             except Exception as e:
                 logger.warning(f"Failed to load GGML model: {e}")
     
-    logger.info(f"Loading HuggingFace Whisper model: {model_name}...")
+    logger.info(f"Checking/Loading HuggingFace Whisper model: {model_name}...")
     try:
         from transformers import WhisperProcessor, WhisperForConditionalGeneration
         import torch
-        
+
+        # Explicit informative log - HF will download model if missing
+        logger.info("If model not cached, HuggingFace will download it now (check container logs).")
+
         _whisper_processor = WhisperProcessor.from_pretrained(model_name)
         _whisper_model = WhisperForConditionalGeneration.from_pretrained(model_name)
         _device = "cuda" if torch.cuda.is_available() else "cpu"
         _whisper_model.to(_device)
-        logger.info(f"HuggingFace model loaded on {_device}")
-        
+        logger.info(f"HuggingFace model loaded successfully on {_device}")
+
         return _whisper_processor, _whisper_model, _device, None
     except Exception as e:
+        logger.error(f"FAILED to load Whisper model. Check internet connection. Error: {e}")
         raise RuntimeError(f"Failed to load Whisper model: {e}")
 
 
@@ -180,7 +184,10 @@ def clean_text(text: str) -> str:
         return ""
     text = text.strip()
     text = text.replace('\n', ' ')
-    text = text.replace('  ', ' ')
+    # Collapse multiple spaces
+    text = ' '.join(text.split())
+    # CRITICAL: remove pipe to avoid breaking our CSV separator
+    text = text.replace('|', '')
     return text
 
 
@@ -335,7 +342,12 @@ def process_videos_to_dataset(
                         
                         if text and len(text) >= 2:
                             csv_file.write(f"{wav_filename}|{text}|{text}\n")
-                            csv_file.flush()
+                            csv_file.flush()  # ensure Python writes buffers
+                            try:
+                                os.fsync(csv_file.fileno())  # force write to disk inside container
+                            except Exception:
+                                # If fsync not available, ignore but keep flush
+                                pass
                             valid_count += 1
                             entries_added += 1
                         else:

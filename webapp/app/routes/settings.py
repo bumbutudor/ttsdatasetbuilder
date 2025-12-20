@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import json
+import os
 
 from app.database import get_db
 from app.auth import get_current_active_user
@@ -61,17 +62,20 @@ async def check_ollama_model(
 ):
     """Check if an Ollama model exists locally."""
     try:
-        import ollama
-        
+        from ollama import Client
+
         model_name = request.model
-        
-        # List local models
+
+        # Connect explicitly to Ollama host (container)
+        ollama_host = os.getenv("OLLAMA_HOST", "http://ollama:11434")
+        client = Client(host=ollama_host)
+
         try:
-            local_models = ollama.list()
-            
+            local_models = client.list()
+
             # Handle both dict and object response formats
             models_list = local_models.get('models', []) if isinstance(local_models, dict) else getattr(local_models, 'models', [])
-            
+
             # Extract model names - handle both dict and Model object
             full_model_names = []
             for m in models_list:
@@ -82,14 +86,14 @@ async def check_ollama_model(
                     name = getattr(m, 'model', '') or getattr(m, 'name', '')
                 if name:
                     full_model_names.append(name)
-            
+
             # Check if model exists (with or without tag)
             model_base = model_name.split(':')[0]
             exists = model_name in full_model_names or any(
                 m == model_name or m.startswith(model_base + ':') or m.split(':')[0] == model_base
                 for m in full_model_names
             )
-            
+
             return {
                 "exists": exists,
                 "model": model_name,
@@ -99,7 +103,7 @@ async def check_ollama_model(
             return {
                 "exists": False,
                 "model": model_name,
-                "error": f"Could not connect to Ollama: {str(e)}"
+                "error": f"Could not connect to Ollama: {str(e)} (host={ollama_host})"
             }
             
     except ImportError:
@@ -113,35 +117,38 @@ async def pull_ollama_model(
 ):
     """Pull (download) an Ollama model with streaming progress."""
     try:
-        import ollama
-        
+        from ollama import Client
+
+        ollama_host = os.getenv("OLLAMA_HOST", "http://ollama:11434")
+        client = Client(host=ollama_host)
+
         def generate_progress():
             """Generator that yields SSE events with download progress."""
             try:
-                # Use ollama.pull with stream=True
-                stream = ollama.pull(model_name, stream=True)
-                
+                # Use client.pull with stream=True
+                stream = client.pull(model_name, stream=True)
+
                 for chunk in stream:
                     status = chunk.get('status', '')
                     total = chunk.get('total', 0)
                     completed = chunk.get('completed', 0)
-                    
+
                     progress = 0
                     if total > 0:
                         progress = int((completed / total) * 100)
-                    
+
                     event_data = {
                         "status": status,
                         "progress": progress,
                         "completed": completed,
                         "total": total
                     }
-                    
+
                     yield f"data: {json.dumps(event_data)}\n\n"
-                
+
                 # Final success message
                 yield f"data: {json.dumps({'status': 'success', 'progress': 100, 'message': 'Model downloaded successfully!'})}\n\n"
-                
+
             except Exception as e:
                 error_msg = str(e)
                 yield f"data: {json.dumps({'status': 'error', 'message': error_msg})}\n\n"

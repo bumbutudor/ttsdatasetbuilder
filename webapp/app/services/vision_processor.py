@@ -141,8 +141,12 @@ def iter_pdf_page_images(
 
 def process_image_with_ollama(image_path: str, mode: str, model: Optional[str] = None) -> str:
     """Send image to Ollama with RETRY logic for OOM/500 errors."""
-    import ollama
-    
+    from ollama import Client
+
+    # Connect explicitly to the Ollama container/host
+    ollama_host = os.getenv("OLLAMA_HOST", "http://ollama:11434")
+    client = Client(host=ollama_host)
+
     system_prompt = SYSTEM_PROMPT_TTS if mode == "TTS" else SYSTEM_PROMPT_STT
     model_name = model or OLLAMA_MODEL_NAME
     
@@ -157,8 +161,8 @@ def process_image_with_ollama(image_path: str, mode: str, model: Optional[str] =
     # Try 1: Standard quality
     try:
         image_bytes = _load_image_bytes(image_path, max_dim=1280)
-        
-        response = ollama.chat(
+
+        response = client.chat(
             model=model_name,
             messages=[
                 {'role': 'system', 'content': system_prompt},
@@ -176,8 +180,8 @@ def process_image_with_ollama(image_path: str, mode: str, model: Optional[str] =
             try:
                 logger.info(f"Retrying with smaller image for {Path(image_path).name}...")
                 image_bytes = _load_image_bytes(image_path, max_dim=896)
-                
-                response = ollama.chat(
+
+                response = client.chat(
                     model=model_name,
                     messages=[
                         {'role': 'system', 'content': system_prompt},

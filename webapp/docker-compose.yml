@@ -20,7 +20,7 @@ services:
       
       # Setări AI
       - AI_PROVIDER=ollama
-      - WHISPER_MODEL_NAME=iRaduS/whisper-romanian-finetune
+      - WHISPER_MODEL_NAME=TransferRapid/whisper-large-v3-turbo_ro
       
       # Conectare la containerul Ollama intern
       - OLLAMA_HOST=http://ollama:11434

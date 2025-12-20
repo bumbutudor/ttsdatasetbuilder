@@ -1,241 +1,387 @@
-"""Video to dataset routes."""
-from typing import List
+"""Video processing routes with multi-step workflow."""
+import os
+import shutil
+import json
+from typing import List, Optional
 from datetime import datetime
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Body
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+import logging
 
 from app.database import get_db
 from app.auth import get_current_active_user
-from app.models import User, Project, ProcessingJob, ProjectStatus
-from app.config import UPLOAD_DIR, DATABASE_URL
+from app.models import User, Project, ProcessingJob, ProjectStatus, DatasetEntry
+from app.config import UPLOAD_DIR, PROJECTS_DIR, DATABASE_URL
+from app.services.video_processor import check_model_exists, download_model_task, split_audio_staging, transcribe_staging
 
 router = APIRouter(prefix="/api/video", tags=["Video"])
 
+# Logger
+logger = logging.getLogger(__name__)
 
-class VideoProcessRequest(BaseModel):
+# --- Models ---
+class ModelCheckRequest(BaseModel):
+    model_name: str
+
+class SplitRequest(BaseModel):
     files: List[str]
-    whisper_model: str = "iRaduS/whisper-romanian-finetune"
-    min_duration: int = 3
-    max_duration: int = 10
-    min_silence_duration: float = 0.5  # Minimum pause to consider split
-    padding_duration: float = 0.2  # Silence added at start/end
-    silence_threshold: int = 45  # dB threshold for silence detection
+    min_duration: float
+    max_duration: float
+    min_silence_duration: float
+    padding_duration: float
+    silence_threshold: int
 
+class TranscribeRequest(BaseModel):
+    staging_id: str
+    files: List[str] # Filenames in staging
+    whisper_model: str
 
-def process_videos_task(
-    job_id: int,
-    file_paths: List[str],
-    project_id: int,
-    whisper_model: str,
-    min_duration: int,
-    max_duration: int,
-    min_silence_duration: float,
-    padding_duration: float,
-    silence_threshold: int,
-    db_url: str
-):
-    """Background task for video processing."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from app.services.video_processor import process_videos_to_dataset
-    import logging
-    
-    logger = logging.getLogger(__name__)
-    logger.info(f"Starting Video task job_id={job_id}, project_id={project_id}")
-    
-    engine = create_engine(db_url)
-    SessionLocal = sessionmaker(bind=engine)
-    db = SessionLocal()
-    
-    try:
-        job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
-        project = db.query(Project).filter(Project.id == project_id).first()
-        
-        if not job or not project:
-            logger.error(f"Job or project not found: job={job}, project={project}")
-            return
-        
-        logger.info(f"Processing {len(file_paths)} videos for folder: {project.folder_path}")
-        
-        job.status = ProjectStatus.PROCESSING
-        job.started_at = datetime.utcnow()
-        db.commit()
-        
-        def progress_callback(progress: int, message: str):
-            job.progress = progress
-            job.message = message
-            db.commit()
-        
-        entries_added, csv_path = process_videos_to_dataset(
-            file_paths,
-            project.folder_path,
-            project.dataset_type.value,
-            progress_callback,
-            whisper_model=whisper_model,
-            min_dur=min_duration,
-            max_dur=max_duration,
-            min_silence_duration=min_silence_duration,
-            padding_duration=padding_duration,
-            silence_threshold=silence_threshold
-        )
-        
-        # Load entries from CSV into database (append, don't delete)
-        job.message = "Saving entries to database..."
-        db.commit()
-        
-        import csv as csv_module
-        import os
-        from app.models import DatasetEntry
-        
-        csv_path = os.path.join(project.folder_path, 'metadata.csv')
-        logger.info(f"Looking for CSV at: {csv_path}")
-        
-        db_entries_added = 0
-        
-        if os.path.exists(csv_path):
-            logger.info("CSV found, reading entries...")
-            
-            # Get existing wav_filenames to avoid duplicates
-            existing_entries = db.query(DatasetEntry.wav_filename).filter(
-                DatasetEntry.project_id == project_id
-            ).all()
-            existing_filenames = set(e.wav_filename for e in existing_entries)
-            logger.info(f"Found {len(existing_filenames)} existing entries in DB")
-            
-            # Read CSV and insert only NEW entries
-            with open(csv_path, 'r', encoding='utf-8') as f:
-                reader = csv_module.reader(f, delimiter='|')
-                rows = list(reader)
-                logger.info(f"CSV has {len(rows)} rows")
-                
-                for row in rows:
-                    if len(row) >= 2:
-                        wav_filename = row[0]
-                        # Skip if already in database
-                        if wav_filename in existing_filenames:
-                            continue
-                        
-                        # Check if audio file exists
-                        audio_file_path = os.path.join(project.folder_path, wav_filename)
-                        audio_exists = os.path.exists(audio_file_path)
-                        logger.info(f"Checking audio: {audio_file_path} exists={audio_exists}")
-                        
-                        entry = DatasetEntry(
-                            project_id=project_id,
-                            wav_filename=wav_filename,
-                            original_text=row[1],
-                            normalized_text=row[2] if len(row) > 2 else row[1],
-                            has_audio=audio_exists
-                        )
-                        db.add(entry)
-                        db_entries_added += 1
-                        logger.info(f"Added entry: {wav_filename}, has_audio={audio_exists}")
-            
-            logger.info(f"Added {db_entries_added} new entries to DB")
-            db.commit()
-            logger.info("DB committed successfully")
-        else:
-            logger.error(f"CSV not found at {csv_path}")
-        
-        # Update project counts
-        total_entries = db.query(DatasetEntry).filter(DatasetEntry.project_id == project_id).count()
-        recorded_entries = db.query(DatasetEntry).filter(
-            DatasetEntry.project_id == project_id,
-            DatasetEntry.has_audio == True
-        ).count()
-        
-        logger.info(f"Total entries: {total_entries}, recorded: {recorded_entries}")
-        
-        project.total_entries = total_entries
-        project.recorded_entries = recorded_entries
-        
-        job.status = ProjectStatus.COMPLETED
-        job.progress = 100
-        job.completed_at = datetime.utcnow()
-        job.message = f"Added {db_entries_added} segments (total: {total_entries})"
-        db.commit()
-        
-    except Exception as e:
-        job.status = ProjectStatus.FAILED
-        job.error_message = str(e)
-        job.completed_at = datetime.utcnow()
-        db.commit()
-    finally:
-        db.close()
+class CommitRequest(BaseModel):
+    staging_id: str
+    entries: List[dict] # {filename, text}
 
+# --- State Management Helpers ---
+# In a production app, use Redis or DB. For this local app, file system + Job DB is fine.
+def get_staging_dir(project_id: int, staging_id: str):
+    return PROJECTS_DIR / f"staging_{project_id}_{staging_id}"
 
-@router.post("/{project_id}/process")
-async def process_videos(
-    project_id: int,
-    request: VideoProcessRequest,
+# --- Endpoints ---
+
+@router.post("/check-model")
+async def check_model(request: ModelCheckRequest, current_user: User = Depends(get_current_active_user)):
+    exists = check_model_exists(request.model_name)
+    return {"exists": exists}
+
+@router.post("/download-model")
+async def download_model(
+    request: ModelCheckRequest, 
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Start video processing with Whisper."""
-    from app.config import PROJECTS_DIR
-    
-    project = db.query(Project).filter(
-        Project.id == project_id,
-        Project.owner_id == current_user.id
-    ).first()
-    
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    
-    if not request.files:
-        raise HTTPException(status_code=400, detail="No files selected")
-    
-    # Ensure project folder exists
-    if not project.folder_path:
-        folder_name = f"project_{project.dataset_type.value}_{project.id}_{datetime.now().strftime('%Y%m%d')}"
-        folder_path = PROJECTS_DIR / folder_name
-        folder_path.mkdir(parents=True, exist_ok=True)
-        project.folder_path = str(folder_path)
-        db.commit()
-    
-    # Build full paths
-    upload_folder = UPLOAD_DIR / f"project_{project_id}"
-    file_paths = []
-    for filename in request.files:
-        file_path = upload_folder / filename
-        if file_path.exists():
-            file_paths.append(str(file_path))
-    
-    if not file_paths:
-        raise HTTPException(status_code=400, detail="No valid files found")
-    
-    # Create job
+    # Create a system job for download
     job = ProcessingJob(
-        job_type='video',
+        job_type='model_download',
+        project_id=0, # System job
+        user_id=current_user.id,
+        status=ProjectStatus.PENDING,
+        message=f"Downloading {request.model_name}..."
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    def task_wrapper(job_id):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        engine = create_engine(DATABASE_URL)
+        SessionLocal = sessionmaker(bind=engine)
+        db = SessionLocal()
+        job = db.query(ProcessingJob).get(job_id)
+        
+        def progress(p, msg):
+            job.progress = p
+            job.message = msg
+            db.commit()
+            
+        try:
+            job.status = ProjectStatus.PROCESSING
+            download_model_task(request.model_name, progress)
+            job.status = ProjectStatus.COMPLETED
+        except Exception as e:
+            job.status = ProjectStatus.FAILED
+            job.error_message = str(e)
+        finally:
+            db.commit()
+            db.close()
+
+    background_tasks.add_task(task_wrapper, job.id)
+    return {"job_id": job.id}
+
+@router.post("/{project_id}/split")
+async def split_audio(
+    project_id: int,
+    request: SplitRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    # --- LOGGING DEBUG ---
+    upload_folder = UPLOAD_DIR / f"project_{project_id}"
+    logger.info(f"DEBUG: Looking for files in: {upload_folder}")
+    logger.info(f"DEBUG: Requested files: {request.files}")
+    
+    video_paths = []
+    for f in request.files:
+        full_path = upload_folder / f
+        if full_path.exists():
+            video_paths.append(str(full_path))
+        else:
+            logger.error(f"DEBUG: File NOT FOUND: {full_path}")
+            
+    if not video_paths:
+        raise HTTPException(status_code=400, detail="No valid video files found on server.")
+        
+    logger.info(f"DEBUG: Valid video paths to process: {video_paths}")
+    # ---------------------
+
+    # Create Job
+    job = ProcessingJob(
+        job_type='video_split',
         project_id=project_id,
         user_id=current_user.id,
         status=ProjectStatus.PENDING,
-        message="Queued for video processing"
+        message="Initializing split..."
     )
     db.add(job)
     db.commit()
     db.refresh(job)
     
-    # Start background task
-    background_tasks.add_task(
-        process_videos_task,
-        job.id,
-        file_paths,
-        project_id,
-        request.whisper_model,
-        request.min_duration,
-        request.max_duration,
-        request.min_silence_duration,
-        request.padding_duration,
-        request.silence_threshold,
-        DATABASE_URL
-    )
+    # Staging ID is the Job ID
+    staging_dir = get_staging_dir(project_id, str(job.id))
     
-    return {
-        "message": "Video processing started",
-        "job_id": job.id
-    }
+    # Get file paths
+    upload_folder = UPLOAD_DIR / f"project_{project_id}"
+    video_paths = [str(upload_folder / f) for f in request.files if (upload_folder / f).exists()]
 
+    def task_wrapper(job_id, v_paths, s_dir, params):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        # Re-import logger for thread context
+        import logging as _logging
+        logger = _logging.getLogger(__name__)
+
+        engine = create_engine(DATABASE_URL)
+        SessionLocal = sessionmaker(bind=engine)
+        local_db = SessionLocal()
+        job_ref = local_db.query(ProcessingJob).get(job_id)
+        
+        def progress(p, msg):
+            logger.info(f"JOB PROGRESS {p}%: {msg}")
+            job_ref.progress = p
+            job_ref.message = msg
+            local_db.commit()
+            
+        def check_cancel():
+            local_db.refresh(job_ref)
+            return job_ref.status == ProjectStatus.FAILED
+            
+        try:
+            job_ref.status = ProjectStatus.PROCESSING
+            local_db.commit()
+            
+            logger.info(f"STARTING SPLIT LOGIC with params: {params}")
+
+            segments = split_audio_staging(
+                v_paths, str(s_dir), 
+                params.min_duration, params.max_duration, 
+                params.min_silence_duration, params.padding_duration, 
+                params.silence_threshold,
+                progress, check_cancel
+            )
+            
+            logger.info(f"SPLIT COMPLETE. Found {len(segments)} segments.")
+
+            # Save segments list to a JSON file
+            with open(s_dir / "segments.json", "w") as f:
+                json.dump(segments, f)
+                
+            job_ref.status = ProjectStatus.COMPLETED
+            job_ref.message = f"Split complete. Found {len(segments)} segments."
+            
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"JOB FAILED: {str(e)}\n{error_trace}")
+            
+            job_ref.status = ProjectStatus.FAILED
+            job_ref.error_message = f"Error: {str(e)}"
+        finally:
+            local_db.commit()
+            local_db.close()
+
+    background_tasks.add_task(task_wrapper, job.id, video_paths, staging_dir, request)
+    return {"job_id": job.id, "staging_id": str(job.id)}
+
+@router.get("/{project_id}/staging/{staging_id}/segments")
+async def get_segments(project_id: int, staging_id: str, current_user: User = Depends(get_current_active_user)):
+    staging_dir = get_staging_dir(project_id, staging_id)
+    json_path = staging_dir / "segments.json"
+    
+    if not json_path.exists():
+        return {"segments": []}
+        
+    with open(json_path, "r") as f:
+        return {"segments": json.load(f)}
+
+@router.get("/{project_id}/staging/{staging_id}/audio/{filename}")
+async def get_staging_audio(project_id: int, staging_id: str, filename: str):
+    path = get_staging_dir(project_id, staging_id) / filename
+    if path.exists():
+        return FileResponse(str(path))
+    raise HTTPException(404)
+
+@router.delete("/{project_id}/staging/{staging_id}/segment/{filename}")
+async def delete_segment(project_id: int, staging_id: str, filename: str):
+    path = get_staging_dir(project_id, staging_id) / filename
+    if path.exists():
+        os.remove(path)
+        # Update JSON
+        json_path = get_staging_dir(project_id, staging_id) / "segments.json"
+        if json_path.exists():
+            with open(json_path, "r") as f:
+                segs = json.load(f)
+            segs = [s for s in segs if s['filename'] != filename]
+            with open(json_path, "w") as f:
+                json.dump(segs, f)
+    return {"status": "deleted"}
+
+@router.post("/{project_id}/transcribe")
+async def start_transcribe(
+    project_id: int,
+    request: TranscribeRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    job = ProcessingJob(
+        job_type='video_transcribe',
+        project_id=project_id,
+        user_id=current_user.id,
+        status=ProjectStatus.PENDING,
+        message="Initializing transcription..."
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    
+    staging_dir = get_staging_dir(project_id, request.staging_id)
+
+    def task_wrapper(job_id, s_dir, files, model):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        engine = create_engine(DATABASE_URL)
+        SessionLocal = sessionmaker(bind=engine)
+        local_db = SessionLocal()
+        job_ref = local_db.query(ProcessingJob).get(job_id)
+        
+        def progress(p, msg):
+            job_ref.progress = p
+            job_ref.message = msg
+            local_db.commit()
+        
+        def check_cancel():
+            local_db.refresh(job_ref)
+            return job_ref.status == ProjectStatus.FAILED
+
+        try:
+            job_ref.status = ProjectStatus.PROCESSING
+            local_db.commit()
+            
+            results = transcribe_staging(
+                str(s_dir), files, model, progress, check_cancel
+            )
+            
+            # Save results to JSON
+            with open(s_dir / "transcriptions.json", "w") as f:
+                json.dump(results, f)
+                
+            job_ref.status = ProjectStatus.COMPLETED
+            job_ref.message = "Transcription complete. Review text."
+        except Exception as e:
+            job_ref.status = ProjectStatus.FAILED
+            job_ref.error_message = str(e)
+        finally:
+            local_db.commit()
+            local_db.close()
+
+    background_tasks.add_task(task_wrapper, job.id, staging_dir, request.files, request.whisper_model)
+    return {"job_id": job.id}
+
+@router.get("/{project_id}/staging/{staging_id}/transcriptions")
+async def get_transcriptions(project_id: int, staging_id: str):
+    path = get_staging_dir(project_id, staging_id) / "transcriptions.json"
+    if path.exists():
+        with open(path, "r") as f:
+            return {"results": json.load(f)}
+    return {"results": []}
+
+@router.post("/{project_id}/cancel/{job_id}")
+async def cancel_job(job_id: int, db: Session = Depends(get_db)):
+    job = db.query(ProcessingJob).get(job_id)
+    if job and job.status in [ProjectStatus.PENDING, ProjectStatus.PROCESSING]:
+        job.status = ProjectStatus.FAILED
+        job.error_message = "Cancelled by user"
+        db.commit()
+    return {"status": "cancelled"}
+
+@router.post("/{project_id}/commit")
+async def commit_dataset(
+    project_id: int, 
+    request: CommitRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    project = db.query(Project).get(project_id)
+    staging_dir = get_staging_dir(project_id, request.staging_id)
+    
+    if not project.folder_path:
+        # Init folder logic if missing
+        pass # (Assumed existing)
+
+    dest_folder = Path(project.folder_path)
+    os.makedirs(dest_folder, exist_ok=True)
+    
+    # Determine start index
+    next_index = 0
+    import glob
+    existing_wavs = glob.glob(str(dest_folder / "*.wav"))
+    for w in existing_wavs:
+        try:
+            idx = int(Path(w).stem)
+            next_index = max(next_index, idx + 1)
+        except: pass
+        
+    entries_added = 0
+    csv_path = dest_folder / "metadata.csv"
+    
+    with open(csv_path, "a", encoding="utf-8", newline='') as f:
+        import csv
+        writer = csv.writer(f, delimiter='|')
+        
+        for item in request.entries:
+            src_path = staging_dir / item['filename']
+            if not src_path.exists(): continue
+            
+            new_filename = f"{next_index:012d}.wav"
+            dst_path = dest_folder / new_filename
+            
+            shutil.copy2(src_path, dst_path)
+            
+            writer.writerow([new_filename, item['text'], item['text']]) # Raw | Norm
+            
+            # DB Entry
+            entry = DatasetEntry(
+                project_id=project_id,
+                wav_filename=new_filename,
+                original_text=item['text'],
+                normalized_text=item['text'],
+                has_audio=True
+            )
+            db.add(entry)
+            
+            next_index += 1
+            entries_added += 1
+            
+    project.total_entries += entries_added
+    project.recorded_entries += entries_added
+    db.commit()
+    
+    # Cleanup staging
+    shutil.rmtree(staging_dir, ignore_errors=True)
+    
+    return {"added": entries_added}

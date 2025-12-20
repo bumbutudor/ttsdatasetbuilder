@@ -1,4 +1,8 @@
 """Main FastAPI application."""
+import logging
+
+# Ensure module loggers at INFO are printed to stdout (so container logs show our logger.info)
+logging.basicConfig(level=logging.INFO)
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates

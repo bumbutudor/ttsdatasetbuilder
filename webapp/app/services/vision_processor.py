@@ -185,9 +185,10 @@ def process_image_with_openai(image_path: str, mode: str, model: Optional[str] =
         client = OpenAI(api_key=key)
         base64_image = _encode_image_to_base64(image_path)
         
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[
+        # Pregătim parametrii de bază
+        api_params = {
+            "model": model_name,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
@@ -199,10 +200,21 @@ def process_image_with_openai(image_path: str, mode: str, model: Optional[str] =
                         }
                     ]
                 }
-            ],
-            max_tokens=4096,
-        )
+            ]
+        }
+        
+        # Logica pentru modelele noi (GPT-5, o1, o3 etc) vs modelele vechi (GPT-4)
+        # Modelele noi folosesc 'max_completion_tokens', cele vechi 'max_tokens'
+        is_new_model = any(x in model_name.lower() for x in ["gpt-5", "o1-", "o3-"])
+        
+        if is_new_model:
+            api_params["max_completion_tokens"] = 4096
+        else:
+            api_params["max_tokens"] = 4096
+            
+        response = client.chat.completions.create(**api_params)
         return response.choices[0].message.content
+        
     except Exception as e:
         print(f"OpenAI error: {e}")
         return ""

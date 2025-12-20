@@ -80,11 +80,9 @@
         <div id="openai-settings" class="hidden">
             <div class="form-group">
                 <label class="form-label">OpenAI Model</label>
-                <select name="openai_model" id="openai_model" class="form-control">
-                    <option value="gpt-4o-mini">GPT-4o Mini (Faster, cheaper)</option>
-                    <option value="gpt-4o">GPT-4o (Best quality)</option>
-                    <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                </select>
+                <input type="text" name="openai_model" id="openai_model" 
+                       class="form-control" placeholder="e.g., gpt-4o, gpt-4o-mini" value="gpt-4o-mini">
+                <small class="text-muted">Introduceți manual ID-ul modelului (trebuie să suporte Vision/Imagini)</small>
             </div>
             <div class="form-group">
                 <label class="form-label">OpenAI API Key</label>

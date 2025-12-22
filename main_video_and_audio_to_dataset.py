@@ -11,14 +11,18 @@ import librosa
 import csv
 import shutil
 import stt_config
+from rich.console import Console
 
 # Try imports
 try:
     from transformers import WhisperProcessor, WhisperForConditionalGeneration
-    import torch
 except ImportError:
     WhisperProcessor = None
     WhisperForConditionalGeneration = None
+
+try:
+    import torch
+except Exception:
     torch = None
 
 try:
@@ -38,6 +42,9 @@ except ImportError:
     Model = None
     print("Error: 'pywhispercpp' library is required for GGML models. Please install it: pip install pywhispercpp")
 
+# Module-level console for consistent logging across functions
+console = Console()
+
 def extract_audio_from_video(video_path, temp_audio_path):
     """Extracts audio from video using moviepy."""
     try:
@@ -53,95 +60,132 @@ def extract_audio_from_video(video_path, temp_audio_path):
 
 def split_audio(audio_path, min_dur, max_dur, mode):
     """
-    Splits audio into chunks based on silence and duration constraints.
-    Returns a list of (audio_data, sample_rate) tuples.
+    Splits audio using Silero VAD to detect natural speech segments.
+    Preserves original room tone instead of zero-padding. Falls back
+    to the previous librosa-based method if torch/Silero isn't available.
+    Returns a list of numpy arrays and the sample rate (44100).
     """
-    # --- CONFIGURARE PARAMETRI (MODIFICĂ AICI) ---
-    # Durata minimă a pauzei (în secunde) pentru a considera o separare.
-    # Dacă pauza e mai mică de atât, bucățile vor fi unite (evită tăierea cuvintelor).
-    MIN_SILENCE_DURATION = 0.5
-    
-    # Durata de liniște adăugată la început și final (padding)
-    PAD_DURATION = 0.2 if mode == 'TTS' else 0.5
-    # ---------------------------------------------
+    sr_hq = 44100
 
-    # Load with librosa (converts to float32 by default, which is fine for processing)
-    y, sr = librosa.load(audio_path, sr=44100)
-    
-    # Detect non-silent intervals
-    # top_db: The threshold (in decibels) below reference to consider as silence
-    # Increased to 45/40 to avoid cutting words with dynamic volume (standard is 60, but videos might be noisy)
-    top_db = 45 if mode == 'TTS' else 30 
-    intervals = librosa.effects.split(y, top_db=top_db)
-    
-    # 1. Merge intervals that are too close (gap < MIN_SILENCE_DURATION)
-    merged_intervals = []
-    if len(intervals) > 0:
-        curr_start, curr_end = intervals[0]
-        for next_start, next_end in intervals[1:]:
-            silence_gap = (next_start - curr_end) / sr
-            if silence_gap < MIN_SILENCE_DURATION:
-                # Merge with previous
-                curr_end = next_end
+    # If torch or silero hub is not available, fall back to librosa-based split
+    if torch is None:
+        console.print("[yellow]Torch not available — using librosa-based splitting fallback.[/yellow]")
+        y, sr = librosa.load(audio_path, sr=sr_hq)
+        top_db = 45 if mode == 'TTS' else 30
+        intervals = librosa.effects.split(y, top_db=top_db)
+
+        # Merge and chunk similarly to previous behavior
+        MIN_SILENCE_DURATION = 0.5
+        merged_intervals = []
+        if len(intervals) > 0:
+            curr_start, curr_end = intervals[0]
+            for next_start, next_end in intervals[1:]:
+                silence_gap = (next_start - curr_end) / sr
+                if silence_gap < MIN_SILENCE_DURATION:
+                    curr_end = next_end
+                else:
+                    merged_intervals.append((curr_start, curr_end))
+                    curr_start, curr_end = next_start, next_end
+            merged_intervals.append((curr_start, curr_end))
+
+        chunks = []
+        pad_samples = int((0.2 if mode == 'TTS' else 0.5) * sr)
+        min_samples = int(min_dur * sr)
+        max_samples = int(max_dur * sr)
+
+        current_parts = []
+        current_len = 0
+        join_pause = np.zeros(int(0.1 * sr))
+
+        for start, end in merged_intervals:
+            seg = y[start:end]
+            seg_len = len(seg)
+            if seg_len > max_samples:
+                continue
+            added = seg_len + (len(join_pause) if current_parts else 0)
+            if current_len + added <= max_samples:
+                if current_parts:
+                    current_parts.append(join_pause)
+                    current_len += len(join_pause)
+                current_parts.append(seg)
+                current_len += seg_len
             else:
-                # Save current and start new
-                merged_intervals.append((curr_start, curr_end))
-                curr_start, curr_end = next_start, next_end
-        merged_intervals.append((curr_start, curr_end))
-    
-    chunks = []
-    current_chunk_parts = []
-    current_len = 0
-    
-    min_samples = int(min_dur * sr)
-    max_samples = int(max_dur * sr)
-    pad_samples = int(PAD_DURATION * sr)
-    
-    # Small pause to insert between joined segments (if we join multiple phrases)
-    join_pause_samples = int(0.1 * sr) 
-    join_pause = np.zeros(join_pause_samples)
-    
-    for start, end in merged_intervals:
-        segment = y[start:end]
-        seg_len = len(segment)
-        
-        # If a single segment is longer than max_dur, we have to skip it or split it arbitrarily.
-        # For dataset quality, skipping is often safer unless we have a smart splitter.
-        if seg_len > max_samples:
-            continue 
-            
-        # Calculate potential length
-        added_len = seg_len
-        if current_chunk_parts:
-            added_len += join_pause_samples
+                if current_len >= min_samples:
+                    full = np.concatenate(current_parts)
+                    full = np.pad(full, (pad_samples, pad_samples), mode='constant')
+                    chunks.append(full)
+                current_parts = [seg]
+                current_len = seg_len
 
-        if current_len + added_len <= max_samples:
-            # Append to current chunk
-            if current_chunk_parts:
-                 current_chunk_parts.append(join_pause)
-                 current_len += join_pause_samples
-            
-            current_chunk_parts.append(segment)
-            current_len += seg_len
+        if current_parts and current_len >= min_samples:
+            full = np.concatenate(current_parts)
+            full = np.pad(full, (pad_samples, pad_samples), mode='constant')
+            chunks.append(full)
+
+        return chunks, sr
+
+    # --- Use Silero VAD ---
+    try:
+        model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False, onnx=False)
+        (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
+        console.print("[green]Silero VAD loaded — using Silero VAD for voice activity detection.[/green]")
+    except Exception as e:
+        console.print(f"[yellow]Silero VAD load failed ({e}) — falling back to librosa-based splitting.[/yellow]")
+        return split_audio(audio_path, min_dur, max_dur, mode)
+
+    # Silero expects 16k for detection; load for VAD
+    try:
+        wav_16k = read_audio(audio_path, sampling_rate=16000)
+    except Exception:
+        # read_audio may fail for some formats; fallback to librosa load+resample
+        wav_tmp, _ = librosa.load(audio_path, sr=16000)
+        wav_16k = wav_tmp
+
+    # High-quality original for slicing
+    wav_hq, sr_hq = librosa.load(audio_path, sr=sr_hq)
+
+    # Get timestamps (start/end in samples at 16k)
+    speech_timestamps = get_speech_timestamps(wav_16k, model, sampling_rate=16000, threshold=0.5)
+
+    if not speech_timestamps:
+        console.print("[yellow]Silero VAD detected no speech segments; returning empty list.[/yellow]")
+        return [], sr_hq
+
+    # Convert timestamps from 16k to sr_hq
+    scale = sr_hq / 16000.0
+    adjusted = []
+    for seg in speech_timestamps:
+        start = int(seg['start'] * scale)
+        end = int(seg['end'] * scale)
+        adjusted.append((start, end))
+
+    # Group segments into chunks trying to preserve natural pauses and not exceed max_dur
+    chunks = []
+    target_len = int(max_dur * sr_hq)
+    min_len = int(min_dur * sr_hq)
+    context = int(0.1 * sr_hq)
+
+    cur_start, cur_end = adjusted[0]
+    for s, e in adjusted[1:]:
+        potential_length = e - cur_start
+        if potential_length < target_len:
+            cur_end = e
         else:
-            # Current chunk is full-ish. Check if it meets min duration
-            if current_len >= min_samples:
-                full_audio = np.concatenate(current_chunk_parts)
-                # Add padding at start/end
-                full_audio = np.pad(full_audio, (pad_samples, pad_samples), mode='constant')
-                chunks.append(full_audio)
-            
-            # Start new chunk with current segment
-            current_chunk_parts = [segment]
-            current_len = seg_len
-            
-    # Last chunk
-    if current_chunk_parts and current_len >= min_samples:
-        full_audio = np.concatenate(current_chunk_parts)
-        full_audio = np.pad(full_audio, (pad_samples, pad_samples), mode='constant')
-        chunks.append(full_audio)
-        
-    return chunks, sr
+            safe_start = max(0, cur_start - context)
+            safe_end = min(len(wav_hq), cur_end + context)
+            seg_audio = wav_hq[safe_start:safe_end]
+            if len(seg_audio) >= min_len:
+                chunks.append(seg_audio)
+            cur_start, cur_end = s, e
+
+    # Add last
+    safe_start = max(0, cur_start - context)
+    safe_end = min(len(wav_hq), cur_end + context)
+    seg_audio = wav_hq[safe_start:safe_end]
+    if len(seg_audio) >= min_len:
+        chunks.append(seg_audio)
+
+    return chunks, sr_hq
 
 def clean_text(text):
     """Basic cleanup of whisper output."""
@@ -159,16 +203,8 @@ if __name__ == '__main__':
     table.add_row("Generates a dataset compatible with TTS/STT training.")
     console.print(table)
     
-    # Check for libraries
-    if VideoFileClip is None:
-        console.print("[red]Critical: moviepy not installed or failed to import.[/red]")
-        console.print("Please run: [yellow]pip install moviepy[/yellow]")
-        sys.exit(1)
-            
-    if Model is None:
-        console.print("[red]Critical: pywhispercpp not installed or failed to import.[/red]")
-        console.print("Please run: [yellow]pip install pywhispercpp[/yellow]")
-        sys.exit(1)
+    # Note: moviepy is only required if there are video files to process (.mp4).
+    # Keep Model requirement (pywhispercpp) checked later when loading GGML model.
 
     # 1. Select Mode
     console.print("\nSelect dataset type:")
@@ -249,17 +285,28 @@ if __name__ == '__main__':
         console.print(f"[red]Unknown MODEL_SOURCE in config: {stt_config.MODEL_SOURCE}[/red]")
         sys.exit(1)
         
-    # 4. Scan Videos
-    videos_folder = os.path.join(app_folder, "videos")
-    if not os.path.exists(videos_folder):
-        os.mkdir(videos_folder)
-        console.print(f"[red]Created 'videos' folder. Please put .mp4 files in it and restart.[/red]")
+    # 4. Scan media folder (supports .mp4 and .wav)
+    console.print("\nPlease enter the path to the media folder (leave empty to use the project's 'videos' folder):")
+    in_media_folder = input("Media folder path (default: project/videos): ").strip()
+    if in_media_folder:
+        media_folder = in_media_folder
+    else:
+        media_folder = os.path.join(app_folder, "videos")
+
+    if not os.path.exists(media_folder):
+        os.mkdir(media_folder)
+        console.print(f"[red]Created media folder at {media_folder}. Please put .mp4 or .wav files in it and restart.[/red]")
         sys.exit(0)
-        
-    video_files = glob.glob(os.path.join(videos_folder, "*.mp4"))
-    console.print(f"Found {len(video_files)} video files.")
-    
-    if not video_files:
+
+    video_files = glob.glob(os.path.join(media_folder, "*.mp4"))
+    wav_files = glob.glob(os.path.join(media_folder, "*.wav"))
+    media_files = []
+    # Keep type info so we know whether to extract
+    media_files += [(p, 'mp4') for p in video_files]
+    media_files += [(p, 'wav') for p in wav_files]
+    console.print(f"Found {len(video_files)} video files and {len(wav_files)} wav files (total {len(media_files)}).")
+
+    if not media_files:
         sys.exit(0)
         
     # CSV Setup
@@ -270,15 +317,29 @@ if __name__ == '__main__':
     valid_count = 0
     temp_full_audio = os.path.join(project_folder, "temp_full.wav")
     
-    for video_file in track(video_files, description="Processing videos..."):
-        console.print(f"Processing [cyan]{os.path.basename(video_file)}[/cyan]...")
-        
-        # Extract Audio
-        if not extract_audio_from_video(video_file, temp_full_audio):
-            continue
-            
+    for file_path, ftype in track(media_files, description="Processing media files..."):
+        console.print(f"Processing [cyan]{os.path.basename(file_path)}[/cyan] ({ftype})...")
+
+        audio_source = None
+        created_temp = False
+
+        if ftype == 'mp4':
+            # Need moviepy to extract
+            if VideoFileClip is None:
+                console.print("[red]moviepy is required to process .mp4 files. Please install it: pip install moviepy[/red]")
+                continue
+
+            # Extract Audio
+            if not extract_audio_from_video(file_path, temp_full_audio):
+                continue
+            audio_source = temp_full_audio
+            created_temp = True
+        else:
+            # WAV file - use source directly
+            audio_source = file_path
+
         # Split Audio
-        chunks, sr = split_audio(temp_full_audio, min_dur, max_dur, mode)
+        chunks, sr = split_audio(audio_source, min_dur, max_dur, mode)
         console.print(f"  -> Found {len(chunks)} valid segments.")
         
         for chunk_data in chunks:
@@ -339,8 +400,8 @@ if __name__ == '__main__':
                 if os.path.exists(wav_path):
                     os.remove(wav_path)
                     
-        # Cleanup temp full audio
-        if os.path.exists(temp_full_audio):
+        # Cleanup temp full audio if we created it for extraction
+        if created_temp and os.path.exists(temp_full_audio):
             os.remove(temp_full_audio)
             
     csv_file.close()

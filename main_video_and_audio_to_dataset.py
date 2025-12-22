@@ -224,6 +224,16 @@ if __name__ == '__main__':
         max_dur = 10
         
     console.print(f"Selected mode: [bold]{mode}[/bold]")
+    # Ask user which sample rate to save dataset files at
+    console.print("\nAlege frecvența de salvare a fișierelor audio pentru dataset:")
+    console.print("1. 16000 Hz (recommended for STT)")
+    console.print("2. 44100 Hz (recommended for TTS/high quality)")
+    sr_choice = input("Choice (1/2, default 1): ").strip()
+    if sr_choice == '2':
+        save_sr = 44100
+    else:
+        save_sr = 16000
+    console.print(f"Fișierele vor fi salvate la {save_sr} Hz")
     
     # 2. Setup Project Folder
     app_folder = os.path.dirname(os.path.realpath(__file__))
@@ -350,14 +360,24 @@ if __name__ == '__main__':
             wav_file_name = (str(valid_count) + '.wav').rjust(12, '0')
             wav_path = os.path.join(project_folder, wav_file_name)
             
-            # Write chunk (44100 Hz for dataset)
-            sf.write(wav_path, chunk_data, sr, subtype='PCM_16')
-            
-            # Transcribe (requires 16000 Hz)
+            # Resample for saving if needed and write chunk
+            if save_sr != sr:
+                try:
+                    to_save = librosa.resample(chunk_data, orig_sr=sr, target_sr=save_sr)
+                except Exception as e:
+                    console.print(f"[red]Eroare la resampling pentru salvare: {e}[/red]")
+                    continue
+            else:
+                to_save = chunk_data
+
+            sf.write(wav_path, to_save, save_sr, subtype='PCM_16')
+
+            # Prepare chunk for transcription (must be 16k)
             try:
-                # Resample to 16k for Whisper
-                # librosa.resample expects float input, chunk_data is likely float from librosa.load
-                chunk_16k = librosa.resample(chunk_data, orig_sr=sr, target_sr=16000)
+                if save_sr == 16000:
+                    chunk_16k = to_save
+                else:
+                    chunk_16k = librosa.resample(chunk_data, orig_sr=sr, target_sr=16000)
                 
                 text = ""
                 

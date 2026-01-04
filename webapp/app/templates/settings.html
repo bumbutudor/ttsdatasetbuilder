@@ -6,7 +6,7 @@
 {% block content %}
 <div class="page-header">
     <h1>⚙️ Settings</h1>
-    <p>Configure parameters for text extraction, normalization, and transcription.</p>
+    <p>Configure parameters for text extraction and voice recording.</p>
 </div>
 
 <form onsubmit="saveSettings(event)" id="settings-form">
@@ -89,38 +89,6 @@
                 <input type="password" name="openai_api_key" id="openai_api_key" 
                        class="form-control" placeholder="sk-...">
                 <small class="text-muted">Your API key is stored securely and never shared</small>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Whisper Settings -->
-    <div class="card mb-xl">
-        <h3 class="mb-lg">Speech-to-Text (Whisper)</h3>
-        <p class="text-muted text-small mb-lg">
-            Settings for transcribing audio using HuggingFace Whisper models.
-        </p>
-        
-        <div class="form-group">
-            <label class="form-label">Whisper Model</label>
-            <select name="whisper_model" id="whisper_model" class="form-control">
-                <option value="iRaduS/whisper-romanian-finetune">iRaduS/whisper-romanian-finetune (Recommended)</option>
-                <option value="TransferRapid/whisper-large-v3-turbo_ro">TransferRapid/whisper-large-v3-turbo_ro (Large)</option>
-                <option value="gigant/whisper-medium-romanian">gigant/whisper-medium-romanian (Medium)</option>
-                <option value="readerbench/whisper-ro">readerbench/whisper-ro</option>
-            </select>
-            <small class="text-muted">Romanian fine-tuned models from HuggingFace</small>
-        </div>
-        
-        <div class="form-row">
-            <div class="form-group">
-                <label class="form-label">Minimum Segment Duration (seconds)</label>
-                <input type="number" name="min_segment_duration" id="min_segment_duration" 
-                       class="form-control" value="3" min="1" max="10">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Maximum Segment Duration (seconds)</label>
-                <input type="number" name="max_segment_duration" id="max_segment_duration" 
-                       class="form-control" value="10" min="5" max="30">
             </div>
         </div>
     </div>
@@ -208,9 +176,6 @@ async function loadSettings() {
         if (settings.ollama_model) document.getElementById('ollama_model').value = settings.ollama_model;
         if (settings.openai_model) document.getElementById('openai_model').value = settings.openai_model;
         if (settings.openai_api_key) document.getElementById('openai_api_key').value = settings.openai_api_key;
-        if (settings.whisper_model) document.getElementById('whisper_model').value = settings.whisper_model;
-        if (settings.min_segment_duration) document.getElementById('min_segment_duration').value = settings.min_segment_duration;
-        if (settings.max_segment_duration) document.getElementById('max_segment_duration').value = settings.max_segment_duration;
         if (settings.sample_rate) document.getElementById('sample_rate').value = settings.sample_rate;
         if (settings.silence_threshold) document.getElementById('silence_threshold').value = settings.silence_threshold;
         if (settings.auto_trim !== undefined) document.getElementById('auto_trim').checked = settings.auto_trim;
@@ -242,9 +207,6 @@ async function saveSettings(event) {
         ollama_model: formData.get('ollama_model'),
         openai_model: formData.get('openai_model'),
         openai_api_key: formData.get('openai_api_key'),
-        whisper_model: formData.get('whisper_model'),
-        min_segment_duration: parseInt(formData.get('min_segment_duration')),
-        max_segment_duration: parseInt(formData.get('max_segment_duration')),
         sample_rate: parseInt(formData.get('sample_rate')),
         silence_threshold: parseInt(formData.get('silence_threshold')),
         auto_trim: formData.get('auto_trim') === 'on'
@@ -275,9 +237,6 @@ function resetSettings() {
     document.getElementById('ollama_model').value = 'gemma3:4b';
     document.getElementById('openai_model').value = 'gpt-4o-mini';
     document.getElementById('openai_api_key').value = '';
-    document.getElementById('whisper_model').value = 'iRaduS/whisper-romanian-finetune';
-    document.getElementById('min_segment_duration').value = 3;
-    document.getElementById('max_segment_duration').value = 10;
     document.getElementById('sample_rate').value = 44100;
     document.getElementById('silence_threshold').value = 30;
     document.getElementById('auto_trim').checked = true;

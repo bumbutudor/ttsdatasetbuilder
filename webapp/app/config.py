@@ -28,7 +28,7 @@ OPENAI_MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # Whisper Settings (HuggingFace only)
-WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL_NAME", "iRaduS/whisper-romanian-finetune")
+WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL_NAME", "gigant/whisper-medium-romanian")
 
 # File upload limits
 MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500MB per file

@@ -1,10 +1,9 @@
 """Project settings routes."""
-from typing import Optional, List
-from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 import json
 import os
@@ -18,41 +17,6 @@ router = APIRouter(prefix="/api/settings", tags=["Settings"])
 
 # Logger for this module
 logger = logging.getLogger(__name__)
-
-
-# HuggingFace models that are known to work well
-HUGGINGFACE_WHISPER_MODELS = [
-    {"name": "iRaduS/whisper-romanian-finetune", "label": "iRaduS/whisper-romanian-finetune (HuggingFace)", "type": "huggingface"},
-    {"name": "TransferRapid/whisper-large-v3-turbo_ro", "label": "TransferRapid/whisper-large-v3-turbo_ro (HuggingFace)", "type": "huggingface"},
-    {"name": "gigant/whisper-medium-romanian", "label": "gigant/whisper-medium-romanian (HuggingFace)", "type": "huggingface"},
-    {"name": "readerbench/whisper-ro", "label": "readerbench/whisper-ro (HuggingFace)", "type": "huggingface"},
-]
-
-
-@router.get("/whisper-models")
-async def get_available_whisper_models(
-    current_user: User = Depends(get_current_active_user)
-):
-    """Get list of available Whisper models (GGML local + HuggingFace)."""
-    models = []
-    
-    # Check for local GGML models in 'models/' folder
-    app_folder = Path(__file__).parent.parent.parent.parent  # ttsdatasetbuilder folder
-    models_folder = app_folder / "models"
-    
-    if models_folder.exists():
-        for model_file in models_folder.glob("*.bin"):
-            models.append({
-                "name": model_file.name,
-                "label": f"⚡ {model_file.name} (Local GGML - Fast)",
-                "type": "ggml",
-                "size": f"{model_file.stat().st_size / (1024*1024):.0f} MB"
-            })
-    
-    # Add HuggingFace models
-    models.extend(HUGGINGFACE_WHISPER_MODELS)
-    
-    return {"models": models}
 
 
 class OllamaModelCheck(BaseModel):
@@ -195,6 +159,9 @@ async def pull_ollama_model(
 
 
 class SettingsUpdate(BaseModel):
+    # Backward compatibility: ignore any fields sent by old clients.
+    model_config = ConfigDict(extra="ignore")
+
     # Text extraction
     min_sentence_length: Optional[int] = 30
     max_sentence_length: Optional[int] = 100
@@ -205,11 +172,6 @@ class SettingsUpdate(BaseModel):
     ollama_model: Optional[str] = "gemma3:4b"
     openai_model: Optional[str] = "gpt-4o-mini"
     openai_api_key: Optional[str] = None
-    
-    # Whisper
-    whisper_model: Optional[str] = "iRaduS/whisper-romanian-finetune"
-    min_segment_duration: Optional[int] = 3
-    max_segment_duration: Optional[int] = 10
     
     # Recording
     sample_rate: Optional[int] = 44100
@@ -239,8 +201,13 @@ async def get_settings(
     if not settings:
         # Return defaults
         return SettingsUpdate().dict()
-    
-    return settings.to_dict()
+
+    # Hide deprecated Whisper settings from the API response.
+    data = settings.to_dict()
+    data.pop("whisper_model", None)
+    data.pop("min_segment_duration", None)
+    data.pop("max_segment_duration", None)
+    return data
 
 
 @router.post("/{project_id}")
@@ -275,9 +242,6 @@ async def save_settings(
     settings.ollama_model = settings_data.ollama_model
     settings.openai_model = settings_data.openai_model
     settings.openai_api_key = settings_data.openai_api_key
-    settings.whisper_model = settings_data.whisper_model
-    settings.min_segment_duration = settings_data.min_segment_duration
-    settings.max_segment_duration = settings_data.max_segment_duration
     settings.sample_rate = settings_data.sample_rate
     settings.silence_threshold = settings_data.silence_threshold
     settings.auto_trim = settings_data.auto_trim

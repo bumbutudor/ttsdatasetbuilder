@@ -33,11 +33,14 @@ def format_hms(seconds: float):
 
 def main():
     p = argparse.ArgumentParser(description="Sum WAV durations in a folder and print total hours")
-    p.add_argument('path', nargs='?', default='.', help='Folder to scan for .wav files')
     p.add_argument('--verbose', '-v', action='store_true', help='Show per-file durations')
     args = p.parse_args()
 
-    root = os.path.abspath(args.path)
+    try:
+        user_input = input("Introduceți calea către director (Enter pentru directorul curent '.'): ").strip()
+    except EOFError:
+        user_input = ''
+    root = os.path.abspath(user_input or '.')
     total_seconds = 0.0
     count = 0
     skipped = 0

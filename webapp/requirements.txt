@@ -44,3 +44,4 @@ rich>=13.0.0
 # Utilities
 python-dotenv>=1.0.0
 httpx>=0.26.0
+yt-dlp>=2023.10.0

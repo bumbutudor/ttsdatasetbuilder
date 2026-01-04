@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.auth import get_current_active_user
@@ -16,6 +17,9 @@ from app.config import UPLOAD_DIR
 
 router = APIRouter(prefix="/api/files", tags=["Files"])
 
+# Modifică setul de extensii permise (sus în fișier sau în funcții)
+# Adăugăm extensii audio comune
+MEDIA_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.mp3', '.wav', '.flac', '.ogg', '.m4a'}
 
 def format_file_size(size_bytes: int) -> str:
     """Format file size in human readable format."""
@@ -62,7 +66,7 @@ async def list_files(
     videos = []
     
     doc_extensions = {'.pdf', '.txt'}
-    video_extensions = {'.mp4', '.mkv', '.avi', '.mov', '.webm'}
+    video_extensions = MEDIA_EXTENSIONS
     
     if upload_folder.exists():
         for file_path in upload_folder.iterdir():
@@ -138,7 +142,7 @@ async def upload_videos(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Upload video files - no processing."""
+    """Upload video/audio files."""
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id
@@ -148,7 +152,7 @@ async def upload_videos(
         raise HTTPException(status_code=404, detail="Project not found")
     
     # Validate file types
-    allowed_extensions = {'.mp4', '.mkv', '.avi', '.mov', '.webm'}
+    allowed_extensions = MEDIA_EXTENSIONS
     for file in files:
         ext = Path(file.filename).suffix.lower()
         if ext not in allowed_extensions:
@@ -169,7 +173,7 @@ async def upload_videos(
         saved_count += 1
     
     return {
-        "message": f"{saved_count} videos uploaded",
+        "message": f"{saved_count} files uploaded",
         "files_uploaded": saved_count
     }
 
@@ -276,4 +280,41 @@ async def delete_file(
         return {"message": f"File '{filename}' deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+class UrlImportRequest(BaseModel):
+    url: str
+
+@router.post("/import-url/{project_id}")
+async def import_from_url(
+    project_id: int,
+    request: UrlImportRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Importă video/audio dintr-un URL web (YouTube, etc)."""
+    from app.services.video_processor import download_media_from_url
+    
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    upload_folder = UPLOAD_DIR / f"project_{project_id}"
+    
+    # Rulăm sincron deoarece yt-dlp poate dura, ideal ar fi background task 
+    # dar pentru simplitate îl ținem aici (sau mută în background tasks cum e la split)
+    result = download_media_from_url(request.url, str(upload_folder))
+    
+    if not result['success']:
+        raise HTTPException(status_code=400, detail=f"Download failed: {result.get('error')}")
+        
+    return {
+        "message": "Download successful",
+        "filename": result['filename'],
+        "title": result['title']
+    }
 

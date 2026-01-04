@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import logging
+import subprocess
 from pathlib import Path
 from typing import List, Tuple, Optional, Callable, Dict
 
@@ -78,46 +79,69 @@ def _load_whisper_model(model_name: str = None):
     except Exception as e:
         raise RuntimeError(f"Failed to load Whisper model: {e}")
 
-def extract_audio_from_video(video_path, temp_audio_path):
-    """Extracts audio from video using moviepy."""
-    if VideoFileClip is None:
-        logger.error("MoviePy library not loaded!")
-        raise RuntimeError("MoviePy is not installed.")
-        
+def convert_audio_for_whisper(input_path: str, output_path: str) -> bool:
+    """
+    Convertește orice input media în WAV, 16000Hz, Mono, PCM 16-bit.
+    Folosește FFmpeg direct via subprocess pentru precizie.
+    """
     try:
-        logger.info(f"Extracting audio from {video_path} to {temp_audio_path}")
+        command = [
+            'ffmpeg', '-y',          # Overwrite yes
+            '-i', input_path,        # Input
+            '-ar', '16000',          # Sample rate 16kHz
+            '-ac', '1',              # Mono
+            '-c:a', 'pcm_s16le',     # Codec 16-bit PCM
+            output_path
+        ]
         
-        # Load Video
-        video = VideoFileClip(video_path)
-        
-        # Check Audio Track
-        if video.audio is None:
-            logger.error(f"Video {video_path} has no audio track!")
-            video.close()
-            return False
-
-        # Extract Audio
-        # FIX: Removed 'verbose=True' causing TypeError
-        video.audio.write_audiofile(
-            temp_audio_path, 
-            fps=44100, 
-            nbytes=2, 
-            codec='pcm_s16le', 
-            logger=None
-        )
-        video.close()
-        
-        # Validate Output
-        if not os.path.exists(temp_audio_path) or os.path.getsize(temp_audio_path) == 0:
-            logger.error("Extracted audio file is missing or empty!")
-            return False
-            
+        # Rulăm comanda, ascundem output-ul (stderr) dacă nu e eroare
+        subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return True
-    except Exception as e:
-        logger.error(f"Error extracting audio from {video_path}: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg conversion failed: {e}")
         return False
+    except Exception as e:
+        logger.error(f"Error converting audio: {e}")
+        return False
+
+def download_media_from_url(url: str, output_folder: str) -> dict:
+    """Descarcă video/audio dintr-un URL folosind yt-dlp."""
+    import yt_dlp
+    
+    os.makedirs(output_folder, exist_ok=True)
+    
+    # Configurare pentru a descărca cel mai bun format și a-l salva cu titlul original
+    ydl_opts = {
+        'format': 'bestvideo+bestaudio/best',
+        'outtmpl': f'{output_folder}/%(title)s.%(ext)s',
+        'restrictfilenames': True,  # Evită caractere speciale în nume
+        'noplaylist': True,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            # Returnăm doar numele fișierului, nu calea completă
+            return {
+                "success": True, 
+                "filename": os.path.basename(filename),
+                "title": info.get('title', 'Unknown')
+            }
+    except Exception as e:
+        logger.error(f"Download failed: {e}")
+        return {"success": False, "error": str(e)}
+
+def prepare_media_source(media_path, temp_audio_path):
+    """
+    Pregătește sursa pentru procesare. 
+    Dacă e video -> extrage audio convertit.
+    Dacă e audio -> convertește la formatul Whisper.
+    """
+    # Indiferent dacă e video sau audio, FFmpeg se descurcă să extragă/convertească stream-ul audio
+    # folosind aceeași comandă definită mai sus.
+    logger.info(f"Processing media source: {media_path} -> {temp_audio_path}")
+    return convert_audio_for_whisper(media_path, temp_audio_path)
 
 def split_audio_logic(audio_path, min_dur, max_dur, min_silence, padding, threshold):
     """
@@ -228,10 +252,12 @@ def split_audio_staging(
         temp_audio_path = os.path.join(staging_folder, temp_audio_name)
             
         try:
-            # 1. Extract Audio
-            success = extract_audio_from_video(video_path, temp_audio_path)
+            # 1. Prepare Audio (Extract & Convert standard)
+            # Folosim noua funcție generică care acceptă și video și audio
+            success = prepare_media_source(video_path, temp_audio_path)
+            
             if not success:
-                logger.error(f"Failed to extract audio from {video_name}")
+                logger.error(f"Failed to process media {video_name}")
                 continue
             
             if check_cancel(): break

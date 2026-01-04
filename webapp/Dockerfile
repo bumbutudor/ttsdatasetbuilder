@@ -5,7 +5,7 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
-ENV PIP_NO_CACHE_DIR=0
+ENV PIP_NO_CACHE_DIR=1
 
 # Install system dependencies
 # Adăugăm poppler-utils pentru pdf2image și git
@@ -17,8 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     git \
     curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
 WORKDIR /app
@@ -28,7 +28,7 @@ COPY requirements.txt ./
 
 # Install Python dependencies
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt
 
 # Download Spacy Romanian Model (CRITIC PENTRU TEXT)
 RUN python -m spacy download ro_core_news_lg

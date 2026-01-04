@@ -14,7 +14,7 @@ import logging
 
 from app.database import get_db
 from app.auth import get_current_active_user
-from app.models import User, Project, ProcessingJob, ProjectStatus, DatasetEntry
+from app.models import User, Project, ProcessingJob, ProjectStatus, DatasetEntry, DatasetType
 from app.config import UPLOAD_DIR, PROJECTS_DIR, DATABASE_URL
 from app.services.video_processor import check_model_exists, download_model_task, split_audio_staging, transcribe_staging
 
@@ -29,11 +29,6 @@ class ModelCheckRequest(BaseModel):
 
 class SplitRequest(BaseModel):
     files: List[str]
-    min_duration: float
-    max_duration: float
-    min_silence_duration: float
-    padding_duration: float
-    silence_threshold: int
 
 class TranscribeRequest(BaseModel):
     staging_id: str
@@ -110,6 +105,17 @@ async def split_audio(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    ).first()
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Decide segmentation based on PROJECT dataset type
+    dataset_type = 'stt' if project.dataset_type == DatasetType.STT else 'tts'
+
     # --- LOGGING DEBUG ---
     upload_folder = UPLOAD_DIR / f"project_{project_id}"
     logger.info(f"DEBUG: Looking for files in: {upload_folder}")
@@ -148,7 +154,7 @@ async def split_audio(
     upload_folder = UPLOAD_DIR / f"project_{project_id}"
     video_paths = [str(upload_folder / f) for f in request.files if (upload_folder / f).exists()]
 
-    def task_wrapper(job_id, v_paths, s_dir, params):
+    def task_wrapper(job_id, v_paths, s_dir, ds_type: str):
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
         # Re-import logger for thread context
@@ -173,15 +179,15 @@ async def split_audio(
         try:
             job_ref.status = ProjectStatus.PROCESSING
             local_db.commit()
-            
-            logger.info(f"STARTING SPLIT LOGIC with params: {params}")
+
+            logger.info(f"STARTING SPLIT LOGIC with dataset_type={ds_type}")
 
             segments = split_audio_staging(
-                v_paths, str(s_dir), 
-                params.min_duration, params.max_duration, 
-                params.min_silence_duration, params.padding_duration, 
-                params.silence_threshold,
-                progress, check_cancel
+                v_paths,
+                str(s_dir),
+                ds_type,
+                progress,
+                check_cancel
             )
             
             logger.info(f"SPLIT COMPLETE. Found {len(segments)} segments.")
@@ -204,7 +210,7 @@ async def split_audio(
             local_db.commit()
             local_db.close()
 
-    background_tasks.add_task(task_wrapper, job.id, video_paths, staging_dir, request)
+    background_tasks.add_task(task_wrapper, job.id, video_paths, staging_dir, dataset_type)
     return {"job_id": job.id, "staging_id": str(job.id)}
 
 @router.get("/{project_id}/staging/{staging_id}/segments")

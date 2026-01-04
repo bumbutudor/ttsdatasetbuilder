@@ -21,6 +21,32 @@ router = APIRouter(prefix="/api/files", tags=["Files"])
 # Adăugăm extensii audio comune
 MEDIA_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.mp3', '.wav', '.flac', '.ogg', '.m4a'}
 
+MAX_UPLOAD_FILENAME_STEM_LEN = 25
+
+
+def _safe_uploaded_filename(upload_folder: Path, original_filename: str, max_stem_len: int = MAX_UPLOAD_FILENAME_STEM_LEN) -> str:
+    """Return a safe filename with stem truncated and made unique inside upload_folder."""
+    base_name = os.path.basename(original_filename or "")
+    ext = Path(base_name).suffix
+    stem = Path(base_name).stem
+
+    # Keep only simple chars to avoid weird filesystem issues
+    safe_stem = "".join(c for c in stem if c.isalnum() or c in ("-", "_"))
+    safe_stem = (safe_stem or "file")[:max_stem_len]
+
+    candidate = f"{safe_stem}{ext}"
+    if not (upload_folder / candidate).exists():
+        return candidate
+
+    counter = 1
+    while True:
+        suffix = f"_{counter}"
+        trimmed = safe_stem[: max(1, max_stem_len - len(suffix))]
+        candidate = f"{trimmed}{suffix}{ext}"
+        if not (upload_folder / candidate).exists():
+            return candidate
+        counter += 1
+
 def format_file_size(size_bytes: int) -> str:
     """Format file size in human readable format."""
     for unit in ['B', 'KB', 'MB', 'GB']:
@@ -124,7 +150,8 @@ async def upload_documents(
     
     saved_count = 0
     for file in files:
-        file_path = upload_folder / file.filename
+        safe_name = _safe_uploaded_filename(upload_folder, file.filename)
+        file_path = upload_folder / safe_name
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         saved_count += 1
@@ -167,7 +194,8 @@ async def upload_videos(
     
     saved_count = 0
     for file in files:
-        file_path = upload_folder / file.filename
+        safe_name = _safe_uploaded_filename(upload_folder, file.filename)
+        file_path = upload_folder / safe_name
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         saved_count += 1

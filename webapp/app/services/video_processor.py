@@ -32,6 +32,29 @@ _whisper_processor = None
 _whisper_model = None
 _device = None
 _current_model_name = None
+_silero_model = None
+_silero_utils = None
+
+def load_silero_model():
+    """Load Silero VAD model from torch hub."""
+    global _silero_model, _silero_utils
+    if _silero_model is not None:
+        return _silero_model, _silero_utils
+        
+    try:
+        logger.info("Loading Silero VAD model...")
+        # Force reload=False to use cache if available
+        model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad',
+                                      model='silero_vad',
+                                      force_reload=False,
+                                      onnx=False,
+                                      trust_repo=True)
+        _silero_model = model
+        _silero_utils = utils
+        return model, utils
+    except Exception as e:
+        logger.error(f"Failed to load Silero VAD: {e}")
+        raise RuntimeError(f"Failed to load Silero VAD: {e}")
 
 def check_model_exists(model_name: str) -> bool:
     """Check if a HuggingFace model exists locally."""
@@ -122,6 +145,34 @@ def download_media_from_url(url: str, output_folder: str) -> dict:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
+
+            # Trunchiere nume fișier (stem <= 25) + evitare coliziuni
+            try:
+                folder = Path(output_folder)
+                original_path = Path(filename)
+                ext = original_path.suffix
+
+                stem = original_path.stem
+                safe_stem = "".join(c for c in stem if c.isalnum() or c in ("-", "_"))
+                safe_stem = (safe_stem or "file")[:25]
+
+                candidate = folder / f"{safe_stem}{ext}"
+                if candidate.exists():
+                    counter = 1
+                    while True:
+                        suffix = f"_{counter}"
+                        trimmed = safe_stem[: max(1, 25 - len(suffix))]
+                        candidate = folder / f"{trimmed}{suffix}{ext}"
+                        if not candidate.exists():
+                            break
+                        counter += 1
+
+                if original_path.resolve() != candidate.resolve():
+                    os.replace(str(original_path), str(candidate))
+                    filename = str(candidate)
+            except Exception as e:
+                logger.warning(f"Could not truncate downloaded filename: {e}")
+
             # Returnăm doar numele fișierului, nu calea completă
             return {
                 "success": True, 
@@ -143,100 +194,123 @@ def prepare_media_source(media_path, temp_audio_path):
     logger.info(f"Processing media source: {media_path} -> {temp_audio_path}")
     return convert_audio_for_whisper(media_path, temp_audio_path)
 
-def split_audio_logic(audio_path, min_dur, max_dur, min_silence, padding, threshold):
+def process_file_with_silero(file_path, model, utils, min_dur, max_dur, target_sr=44100):
     """
-    Core splitting logic ported EXACTLY from your working script.
+    Procesează un singur fișier audio folosind Silero VAD.
+    Adaptat din scriptul split_audio_silero_vad.py
     """
-    # Load with librosa at 44100 (high quality for dataset storage)
-    y, sr = librosa.load(audio_path, sr=44100)
+    # Extragem utilitarele
+    (get_speech_timestamps, _, _, _, _) = utils
     
-    # Detect non-silent intervals
-    intervals = librosa.effects.split(y, top_db=threshold)
-    
-    # 1. Merge intervals that are too close
-    merged_intervals = []
-    if len(intervals) > 0:
-        curr_start, curr_end = intervals[0]
-        for next_start, next_end in intervals[1:]:
-            silence_gap = (next_start - curr_end) / sr
-            if silence_gap < min_silence:
-                # Merge with previous
-                curr_end = next_end
-            else:
-                # Save current and start new
-                merged_intervals.append((curr_start, curr_end))
-                curr_start, curr_end = next_start, next_end
-        merged_intervals.append((curr_start, curr_end))
-    
-    chunks = []
-    current_chunk_parts = []
-    current_len = 0
-    
-    min_samples = int(min_dur * sr)
-    max_samples = int(max_dur * sr)
-    pad_samples = int(padding * sr)
-    
-    # Small pause to insert between joined segments
-    join_pause_samples = int(0.1 * sr) 
-    join_pause = np.zeros(join_pause_samples)
-    
-    for start, end in merged_intervals:
-        segment = y[start:end]
-        seg_len = len(segment)
-        
-        # Skip overly long single segments
-        if seg_len > max_samples:
-            continue 
-            
-        # Calculate potential length
-        added_len = seg_len
-        if current_chunk_parts:
-            added_len += join_pause_samples
+    # --- PASUL 1: Încărcare pentru VAD (16000 Hz) ---
+    try:
+        # Folosim librosa pentru a citi fișierul la 16k
+        wav_np, _ = librosa.load(file_path, sr=16000, mono=True)
+        # Convertim în tensor Torch
+        wav_16k = torch.from_numpy(wav_np)
+    except Exception as e:
+        logger.error(f"Error reading audio (16k) {os.path.basename(file_path)}: {e}")
+        return []
 
-        if current_len + added_len <= max_samples:
-            # Append to current chunk
-            if current_chunk_parts:
-                 current_chunk_parts.append(join_pause)
-                 current_len += join_pause_samples
-            
-            current_chunk_parts.append(segment)
-            current_len += seg_len
-        else:
-            # Current chunk is full-ish. Check if it meets min duration
-            if current_len >= min_samples:
-                full_audio = np.concatenate(current_chunk_parts)
-                # Add padding at start/end
-                full_audio = np.pad(full_audio, (pad_samples, pad_samples), mode='constant')
-                chunks.append(full_audio)
-            
-            # Start new chunk with current segment
-            current_chunk_parts = [segment]
-            current_len = seg_len
-            
-    # Last chunk
-    if current_chunk_parts and current_len >= min_samples:
-        full_audio = np.concatenate(current_chunk_parts)
-        full_audio = np.pad(full_audio, (pad_samples, pad_samples), mode='constant')
-        chunks.append(full_audio)
+    # --- PASUL 2: Detectare segmente ---
+    try:
+        # threshold=0.5 (sensibilitate standard)
+        # min_speech_duration_ms=250 (ignorăm zgomotele foarte scurte)
+        speech_timestamps = get_speech_timestamps(wav_16k, model, sampling_rate=16000, threshold=0.5, min_speech_duration_ms=250)
+    except Exception as e:
+         logger.error(f"Error executing VAD on {os.path.basename(file_path)}: {e}")
+         return []
+    
+    if not speech_timestamps:
+        return []
+
+    # --- PASUL 3: Încărcare High Quality pentru tăiere ---
+    try:
+        wav_hq, _ = librosa.load(file_path, sr=target_sr)
+    except Exception as e:
+        logger.error(f"Error reading audio (HQ) {os.path.basename(file_path)}: {e}")
+        return []
+
+    # --- PASUL 4: Extragere și Grupare (Corecție Durată) ---
+    scale_factor = target_sr / 16000.0
+    final_chunks = []
+    
+    min_samples = int(min_dur * target_sr)
+    max_samples = int(max_dur * target_sr)
+    
+    # Conversie timestamp-uri la sample rate-ul țintă
+    adjusted_timestamps = []
+    for seg in speech_timestamps:
+        start = int(seg['start'] * scale_factor)
+        end = int(seg['end'] * scale_factor)
+        adjusted_timestamps.append((start, end))
+
+    if not adjusted_timestamps:
+        return []
+
+    current_chunk_start = adjusted_timestamps[0][0]
+    current_chunk_end = adjusted_timestamps[0][1]
+    
+    # Buffer mic (0.1s) la capete pentru naturalețe
+    context_samples = int(0.1 * target_sr)
+
+    for i in range(1, len(adjusted_timestamps)):
+        next_start, next_end = adjusted_timestamps[i]
         
-    return chunks, sr
+        # Verificăm dacă adăugarea segmentului următor depășește MAX_DUR
+        if (next_end - current_chunk_start) < max_samples:
+            # Dacă nu depășește, unim segmentele
+            current_chunk_end = next_end
+        else:
+            # Dacă depășește, salvăm ce am acumulat până acum
+            s = max(0, current_chunk_start - context_samples)
+            e = min(len(wav_hq), current_chunk_end + context_samples)
+            segment = wav_hq[s:e]
+            
+            # Verificăm dacă segmentul rezultat respectă MIN_DUR
+            if len(segment) >= min_samples:
+                final_chunks.append(segment)
+            
+            # Resetăm acumularea începând cu segmentul curent
+            current_chunk_start = next_start
+            current_chunk_end = next_end
+            
+    # Adăugăm ultimul segment rămas
+    s = max(0, current_chunk_start - context_samples)
+    e = min(len(wav_hq), current_chunk_end + context_samples)
+    segment = wav_hq[s:e]
+    if len(segment) >= min_samples:
+        final_chunks.append(segment)
+
+    return final_chunks
 
 def split_audio_staging(
     video_paths: List[str],
     staging_folder: str,
-    min_dur: float,
-    max_dur: float,
-    min_silence: float,
-    padding: float,
-    threshold: int,
+    dataset_type: str, # 'tts' or 'stt'
     progress_callback: Callable,
     check_cancel: Callable
 ) -> List[Dict]:
     """
-    Step 1: Extract and Split audio into a staging folder using the robust logic.
+    Step 1: Extract and Split audio into a staging folder using Silero VAD.
     """
     os.makedirs(staging_folder, exist_ok=True)
     segments_info = []
+    
+    # Configurare durate bazată pe tipul dataset-ului
+    if dataset_type == 'tts':
+        min_dur = 3.0
+        max_dur = 10.0
+    else: # stt
+        min_dur = 3.0
+        max_dur = 30.0
+        
+    # Încărcare model Silero
+    try:
+        model, utils = load_silero_model()
+    except Exception as e:
+        logger.error(f"Could not load Silero model: {e}")
+        raise e
     
     total_videos = len(video_paths)
     
@@ -247,13 +321,11 @@ def split_audio_staging(
         progress_callback(int((v_idx / total_videos) * 100), f"Processing {video_name}...")
         
         # Temp file for full audio
-        # Use simple name to avoid character issues in temp paths if possible
         temp_audio_name = f"temp_{v_idx}.wav"
         temp_audio_path = os.path.join(staging_folder, temp_audio_name)
             
         try:
             # 1. Prepare Audio (Extract & Convert standard)
-            # Folosim noua funcție generică care acceptă și video și audio
             success = prepare_media_source(video_path, temp_audio_path)
             
             if not success:
@@ -262,11 +334,13 @@ def split_audio_staging(
             
             if check_cancel(): break
 
-            # 2. Split Audio using the logic from your script
-            chunks, sr = split_audio_logic(
+            # 2. Split Audio using Silero VAD
+            # Folosim 44100Hz pentru calitate maximă la salvare
+            chunks = process_file_with_silero(
                 temp_audio_path, 
+                model, utils, 
                 min_dur, max_dur, 
-                min_silence, padding, threshold
+                target_sr=44100
             )
             
             logger.info(f"Video {video_name}: Found {len(chunks)} segments")
@@ -278,13 +352,13 @@ def split_audio_staging(
                 seg_filename = f"{video_name}_seg_{i:04d}.wav"
                 seg_path = os.path.join(staging_folder, seg_filename)
                 
-                # Save as 16-bit PCM (standard for datasets)
-                sf.write(seg_path, chunk_data, sr, subtype='PCM_16')
+                # Save as 16-bit PCM
+                sf.write(seg_path, chunk_data, 44100, subtype='PCM_16')
                 
                 segments_info.append({
                     "filename": seg_filename,
                     "path": seg_path,
-                    "duration": round(len(chunk_data)/sr, 2)
+                    "duration": round(len(chunk_data) / 44100, 2)
                 })
                 
         except Exception as e:

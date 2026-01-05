@@ -6,7 +6,7 @@
 {% block content %}
 <div class="page-header">
     <h1>⚙️ Settings</h1>
-    <p>Configure parameters for text extraction and voice recording.</p>
+    <p>Configure parameters for text extraction and Vision LLM extraction.</p>
 </div>
 
 <form onsubmit="saveSettings(event)" id="settings-form">
@@ -213,21 +213,37 @@ async function saveSettings(event) {
     }
 }
 
-function resetSettings() {
+async function resetSettings() {
     if (!confirm('Reset all settings to defaults?')) return;
-    
+
+    const projectId = getCurrentProjectId();
+    let datasetType = null;
+    if (projectId) {
+        try {
+            const projectResp = await api.get(`/api/projects/${projectId}`);
+            if (projectResp.ok) {
+                const project = await projectResp.json();
+                datasetType = project.dataset_type;
+            }
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    const isSTT = datasetType === 'STT';
     document.getElementById('min_sentence_length').value = 30;
-    document.getElementById('max_sentence_length').value = 100;
-    document.getElementById('min_words').value = 5;
+    document.getElementById('max_sentence_length').value = isSTT ? 220 : 100;
+    document.getElementById('min_words').value = isSTT ? 3 : 5;
+
     document.getElementById('ai_provider').value = 'ollama';
     document.getElementById('ollama_model').value = 'gemma3:4b';
     document.getElementById('openai_model').value = 'gpt-4o-mini';
     document.getElementById('openai_api_key').value = '';
     document.getElementById('gemini_model').value = 'gemini-2.0-flash';
     document.getElementById('gemini_api_key').value = '';
-    
+
     toggleProviderSettings();
-    ui.showAlert('Settings reset to defaults', 'info');
+    ui.showAlert('Settings reset to recommended defaults', 'info');
 }
 
 // Override project change to reload settings

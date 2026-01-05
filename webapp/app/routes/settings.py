@@ -202,8 +202,18 @@ async def get_settings(
     ).first()
     
     if not settings:
-        # Return defaults
-        return SettingsUpdate().dict()
+        # Return defaults (recommended based on dataset type)
+        defaults = SettingsUpdate().dict()
+        dataset_type = getattr(project.dataset_type, "value", project.dataset_type)
+        if dataset_type == "STT":
+            defaults["min_sentence_length"] = 30
+            defaults["max_sentence_length"] = 220
+            defaults["min_words"] = 3
+        else:
+            defaults["min_sentence_length"] = 30
+            defaults["max_sentence_length"] = 100
+            defaults["min_words"] = 5
+        return defaults
 
     # Hide deprecated Whisper settings from the API response.
     data = settings.to_dict()

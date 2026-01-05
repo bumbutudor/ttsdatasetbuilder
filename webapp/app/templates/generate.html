@@ -60,7 +60,7 @@
 </div>
 
 <!-- Processing Status -->
-<div id="processing-status" class="card hidden">
+<div id="processing-status" class="card hidden mb-xl">
     <h3 class="mb-lg">Processing Status</h3>
     <div class="progress">
         <div class="progress-bar" id="processing-progress" style="width: 0%"></div>
@@ -327,8 +327,25 @@ async function loadSettings() {
         if (minLen) minLen.textContent = settings.min_sentence_length || 30;
         if (maxLen) maxLen.textContent = settings.max_sentence_length || 100;
         if (minWords) minWords.textContent = settings.min_words || 5;
-        if (provider) provider.textContent = settings.ai_provider || 'Ollama';
-        if (model) model.textContent = settings.ai_model || 'gemma3:4b';
+
+        if (provider || model) {
+            const providerKey = String(settings.ai_provider || 'ollama').toLowerCase();
+
+            const providerLabel = providerKey === 'openai'
+                ? 'OpenAI'
+                : providerKey === 'gemini'
+                    ? 'Google Gemini'
+                    : 'Ollama';
+
+            const modelName = providerKey === 'openai'
+                ? (settings.openai_model || 'gpt-4o-mini')
+                : providerKey === 'gemini'
+                    ? (settings.gemini_model || 'gemini-2.0-flash')
+                    : (settings.ollama_model || 'gemma3:4b');
+
+            if (provider) provider.textContent = providerLabel;
+            if (model) model.textContent = modelName;
+        }
     } catch (error) {
         console.error('Error loading settings:', error);
     }

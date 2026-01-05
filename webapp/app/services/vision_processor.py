@@ -281,7 +281,7 @@ def process_image_with_gemini(image_path: str, mode: str, model: Optional[str] =
         response = client.models.generate_content(
             model=model_name,
             contents=[
-                types.Content(role="user", parts=[image_part, types.Part.from_text(prompt_text)])
+                types.Content(role="user", parts=[image_part, types.Part.from_text(text=prompt_text)])
             ],
         )
 

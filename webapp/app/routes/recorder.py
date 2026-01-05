@@ -1,5 +1,6 @@
 """Voice recorder routes."""
 import os
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
@@ -11,6 +12,29 @@ from app.auth import get_current_active_user
 from app.models import User, Project, DatasetEntry
 
 router = APIRouter(prefix="/api/recorder", tags=["Recorder"])
+
+
+def _get_audio_duration_seconds(file_path: Path) -> float:
+    """Get audio duration in seconds using ffprobe (robust across codecs)."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(file_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return float((result.stdout or "").strip() or 0.0)
+    except Exception:
+        return 0.0
 
 
 @router.get("/{project_id}/sentences")
@@ -98,6 +122,27 @@ async def upload_recording(
     with open(audio_path, "wb") as f:
         content = await audio.read()
         f.write(content)
+
+    # Enforce duration limits
+    min_seconds = 3.0
+    max_seconds = 10.0 if project.dataset_type.value == "TTS" else 30.0
+    duration_seconds = _get_audio_duration_seconds(audio_path)
+    if duration_seconds <= 0:
+        try:
+            audio_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail="Invalid audio file")
+
+    if duration_seconds < min_seconds or duration_seconds > max_seconds:
+        try:
+            audio_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid recording duration: {duration_seconds:.2f}s (allowed: {min_seconds:.0f}s - {max_seconds:.0f}s). Please record again.",
+        )
     
     # Optional: trim silence
     if auto_trim:

@@ -158,6 +158,10 @@ let durationInterval = null;
 let currentSentenceIndex = 0;
 let sentences = [];
 let audioContext = null;
+let currentDatasetType = null;
+let maxDurationSeconds = 10;
+const MIN_DURATION_SECONDS = 3;
+let lastRecordingDurationSeconds = 0;
 
 document.addEventListener('DOMContentLoaded', () => {
     if (!api.isAuthenticated()) {
@@ -245,8 +249,9 @@ async function loadSentences() {
         
         // Set max duration based on project type
         const project = await api.get(`/api/projects/${projectId}`).then(r => r.json());
-        const maxDur = project.dataset_type === 'STT' ? '30s' : '10s';
-        document.getElementById('max-duration').textContent = maxDur;
+        currentDatasetType = project.dataset_type;
+        maxDurationSeconds = project.dataset_type === 'STT' ? 30 : 10;
+        document.getElementById('max-duration').textContent = `${maxDurationSeconds}s`;
         
     } catch (error) {
         ui.showAlert(error.message, 'error');
@@ -316,13 +321,30 @@ async function startRecording() {
         };
         
         mediaRecorder.onstop = () => {
+            // Determine duration based on start/stop timestamps
+            lastRecordingDurationSeconds = recordingStartTime ? (Date.now() - recordingStartTime) / 1000 : 0;
+
             audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
             audioUrl = URL.createObjectURL(audioBlob);
-            
-            // Enable playback and save
-            document.getElementById('play-btn').disabled = false;
-            document.getElementById('save-btn').disabled = false;
-            document.getElementById('discard-btn').disabled = false;
+
+            // Enforce min/max duration
+            const minOk = lastRecordingDurationSeconds >= MIN_DURATION_SECONDS;
+            const maxOk = lastRecordingDurationSeconds <= (maxDurationSeconds + 0.25);
+            if (!minOk || !maxOk) {
+                const maxLabel = `${maxDurationSeconds}s`;
+                ui.showAlert(
+                    !minOk
+                        ? `Recording too short (${lastRecordingDurationSeconds.toFixed(1)}s). Minimum is ${MIN_DURATION_SECONDS}s. Please record again.`
+                        : `Recording too long (${lastRecordingDurationSeconds.toFixed(1)}s). Maximum is ${maxLabel}. Please record again.`,
+                    'warning'
+                );
+                resetRecordingState();
+            } else {
+                // Enable playback and save
+                document.getElementById('play-btn').disabled = false;
+                document.getElementById('save-btn').disabled = false;
+                document.getElementById('discard-btn').disabled = false;
+            }
             
             // Stop stream
             stream.getTracks().forEach(track => track.stop());
@@ -368,6 +390,12 @@ function updateDuration() {
     const seconds = Math.floor(elapsed % 60);
     document.getElementById('recording-duration').textContent = 
         `${minutes}:${seconds.toString().padStart(2, '0')}`;
+
+    // Auto-stop at max duration
+    if (isRecording && elapsed >= maxDurationSeconds) {
+        stopRecording();
+        ui.showAlert(`Reached maximum duration (${maxDurationSeconds}s). Recording stopped.`, 'info');
+    }
 }
 
 let currentPlayback = null;
@@ -410,6 +438,17 @@ function discardRecording() {
 
 async function saveAndNext() {
     if (!audioBlob) return;
+
+    if (lastRecordingDurationSeconds < MIN_DURATION_SECONDS) {
+        ui.showAlert(`Recording too short. Minimum is ${MIN_DURATION_SECONDS}s. Please record again.`, 'warning');
+        resetRecordingState();
+        return;
+    }
+    if (lastRecordingDurationSeconds > (maxDurationSeconds + 0.25)) {
+        ui.showAlert(`Recording too long. Maximum is ${maxDurationSeconds}s. Please record again.`, 'warning');
+        resetRecordingState();
+        return;
+    }
     
     const projectId = getCurrentProjectId();
     const sentence = sentences[currentSentenceIndex];

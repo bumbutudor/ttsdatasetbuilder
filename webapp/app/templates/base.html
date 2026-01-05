@@ -16,6 +16,22 @@
     <script>
         // Base path when running behind the unified reverse proxy
         window.__APP_BASE_PATH__ = "/datasetBuilder";
+        
+        // Define withBase early so inline scripts can use it
+        window.withBase = function(path) {
+            const base = window.__APP_BASE_PATH__;
+            if (!base || !path) return path;
+            if (typeof path === 'string' && (path.startsWith('http://') || path.startsWith('https://'))) {
+                return path;
+            }
+            if (typeof path === 'string' && path.startsWith(base + '/')) {
+                return path;
+            }
+            if (typeof path === 'string' && path.startsWith('/')) {
+                return base + path;
+            }
+            return base + '/' + path;
+        };
     </script>
     
     {% block head %}{% endblock %}

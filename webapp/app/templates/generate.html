@@ -167,7 +167,7 @@ async function startModelDownload() {
     
     try {
         const token = api.token;
-        const response = await fetch(`/api/settings/ollama/pull/${encodeURIComponent(pendingModelName)}`, {
+        const response = await fetch(withBase(`/api/settings/ollama/pull/${encodeURIComponent(pendingModelName)}`), {
             headers: {
                 'Authorization': `Bearer ${token}`
             }

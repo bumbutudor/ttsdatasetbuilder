@@ -222,7 +222,7 @@ async function loadSentences() {
     if (!projectId) return;
     
     try {
-        const response = await api.get(`/api/recorder/${projectId}/sentences`);
+        const response = await api.get(withBase(`/api/recorder/${projectId}/sentences`));
         if (!response.ok) throw new Error('Failed to load sentences');
         
         const data = await response.json();
@@ -460,7 +460,7 @@ async function saveAndNext() {
         formData.append('padding_start', document.getElementById('padding-start').value);
         formData.append('padding_end', document.getElementById('padding-end').value);
         
-        const response = await fetch(`/api/recorder/${projectId}/upload/${sentence.id}`, {
+        const response = await fetch(withBase(`/api/recorder/${projectId}/upload/${sentence.id}`), {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${api.token}`

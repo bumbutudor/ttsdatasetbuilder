@@ -1,0 +1,892 @@
+--- Start of D:\Disk D 13-09-25\CS\AI Guguta\ttsdatasetbuilder\voiceRecordingWebApp\docker-compose.yml ---
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: stt_app
+    ports:
+      - "8000:8000"
+    volumes:
+      # Montăm folderul curent (unde e metadata.csv) în /data în container
+      - ./dataset:/data
+    restart: unless-stopped
+--- End of D:\Disk D 13-09-25\CS\AI Guguta\ttsdatasetbuilder\voiceRecordingWebApp\docker-compose.yml ---
+
+
+--- Start of D:\Disk D 13-09-25\CS\AI Guguta\ttsdatasetbuilder\voiceRecordingWebApp\Dockerfile ---
+FROM python:3.10-slim
+
+# Instalăm ffmpeg pentru conversia audio
+RUN apt-get update && \
+    apt-get install -y ffmpeg && \
+    apt-get clean
+
+WORKDIR /app
+
+# Copiem cerințele și instalăm
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiem codul sursă
+COPY app ./app
+
+# Portul expus
+EXPOSE 8000
+
+# Comanda de start
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+--- End of D:\Disk D 13-09-25\CS\AI Guguta\ttsdatasetbuilder\voiceRecordingWebApp\Dockerfile ---
+
+
+--- Start of D:\Disk D 13-09-25\CS\AI Guguta\ttsdatasetbuilder\voiceRecordingWebApp\requirements.txt ---
+fastapi
+uvicorn
+python-multipart
+sqlalchemy
+pydub
+pandas
+ujson
+jinja2
+python-dateutil
+--- End of D:\Disk D 13-09-25\CS\AI Guguta\ttsdatasetbuilder\voiceRecordingWebApp\requirements.txt ---
+
+
+--- Start of D:\Disk D 13-09-25\CS\AI Guguta\ttsdatasetbuilder\voiceRecordingWebApp\app\database.py ---
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Enum
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+import datetime
+
+# Database stored in mounted /data folder for persistence across container restarts
+SQLALCHEMY_DATABASE_URL = "sqlite:////data/stt_tasks.db"
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String, unique=True, index=True)
+    original_text = Column(String)
+    normalized_text = Column(String) # Coloana 3
+    
+    # Status: available, locked, completed, skipped
+    status = Column(String, default="available", index=True)
+    
+    locked_by = Column(String, nullable=True)
+    locked_at = Column(DateTime, nullable=True)
+    
+    completed_by = Column(String, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Float, default=0.0)
+
+Base.metadata.create_all(bind=engine)
+--- End of D:\Disk D 13-09-25\CS\AI Guguta\ttsdatasetbuilder\voiceRecordingWebApp\app\database.py ---
+
+
+--- Start of D:\Disk D 13-09-25\CS\AI Guguta\ttsdatasetbuilder\voiceRecordingWebApp\app\main.py ---
+import os
+import shutil
+import csv
+import subprocess
+import datetime
+import zipfile
+import io
+import glob
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from app.database import SessionLocal, Task, engine
+
+# Configurare
+DATA_FOLDER = "/data"
+METADATA_FILE = os.path.join(DATA_FOLDER, "metadata.csv")
+LOCK_TIMEOUT_MINUTES = 5
+
+# Read ROOT_PATH from environment for reverse proxy support
+root_path = os.getenv("ROOT_PATH", "")
+
+app = FastAPI(root_path=root_path)
+
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+templates = Jinja2Templates(directory="app/static")
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def init_db():
+    db = SessionLocal()
+    if db.query(Task).count() == 0:
+        if os.path.exists(METADATA_FILE):
+            try:
+                with open(METADATA_FILE, 'r', encoding='utf-8') as f:
+                    reader = csv.reader(f, delimiter='|')
+                    tasks = []
+                    for row in reader:
+                        if len(row) >= 3:
+                            task = Task(
+                                filename=row[0].strip(),
+                                original_text=row[1].strip(),
+                                normalized_text=row[2].strip(),
+                                status="available"
+                            )
+                            tasks.append(task)
+                    db.add_all(tasks)
+                    db.commit()
+            except Exception as e:
+                print(f"Error importing CSV: {e}")
+    db.close()
+
+init_db()
+
+def convert_audio(input_path, output_path):
+    command = [
+        "ffmpeg", "-y", "-i", input_path,
+        "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+        output_path
+    ]
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def get_audio_duration(file_path):
+    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        return float(result.stdout.strip())
+    except:
+        return 0.0
+
+# --- ROUTES ---
+
+@app.get("/", response_class=HTMLResponse)
+async def read_root(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+@app.get("/api/task")
+async def get_next_task(username: str, db: Session = Depends(get_db)):
+    # 1. Deblochează task-urile vechi (Timeouts)
+    expire_time = datetime.datetime.utcnow() - datetime.timedelta(minutes=LOCK_TIMEOUT_MINUTES)
+    db.query(Task).filter(Task.status == "locked", Task.locked_at < expire_time).update({"status": "available", "locked_by": None})
+    db.commit()
+
+    # 2. Caută un task disponibil ALEATORIU
+    # Modificarea critică: order_by(func.random())
+    # Astfel, dacă dai skip, e foarte puțin probabil să primești același task înapoi imediat.
+    task = db.query(Task).filter(Task.status == "available").order_by(func.random()).first()
+    
+    if not task:
+        # Fallback: verificăm dacă mai sunt task-uri blocate care ar putea expira
+        remaining = db.query(Task).filter(Task.status == "locked").count()
+        if remaining > 0:
+             return JSONResponse({"status": "wait", "message": "Nicio propoziție disponibilă momentan. Încearcă în câteva minute."})
+        return JSONResponse({"status": "done", "message": "Toate propozițiile au fost înregistrate! Mulțumim!"})
+    
+    # 3. Blochează task-ul ("Soft Lock")
+    task.status = "locked"
+    task.locked_by = username
+    task.locked_at = datetime.datetime.utcnow()
+    db.commit()
+    
+    return {
+        "id": task.id,
+        "text": task.normalized_text,
+        "filename": task.filename
+    }
+
+@app.post("/api/upload")
+async def upload_audio(
+    id: int = Form(...),
+    username: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    task = db.query(Task).filter(Task.id == id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    temp_filename = f"temp_{id}.webm"
+    temp_path = os.path.join(DATA_FOLDER, temp_filename)
+    
+    try:
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        final_path = os.path.join(DATA_FOLDER, task.filename)
+        convert_audio(temp_path, final_path)
+        
+        duration = get_audio_duration(final_path)
+        
+        if duration < 3.0 or duration > 30.0:
+            os.remove(final_path)
+            return JSONResponse(status_code=400, content={"status": "error", "message": f"Durata {duration:.1f}s incorectă! (Min 3s, Max 30s)"})
+
+        task.status = "completed"
+        task.completed_by = username
+        task.completed_at = datetime.datetime.utcnow()
+        task.duration_seconds = duration
+        db.commit()
+        
+        return {"status": "success"}
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+@app.post("/api/skip")
+async def skip_task(id: int = Form(...), db: Session = Depends(get_db)):
+    task = db.query(Task).filter(Task.id == id).first()
+    if task and task.status == "locked":
+        task.status = "available"
+        task.locked_by = None
+        db.commit()
+    return {"status": "skipped"}
+
+# --- ADMIN ROUTES ---
+
+@app.get("/api/admin/stats")
+async def get_admin_stats(db: Session = Depends(get_db)):
+    total_tasks = db.query(Task).count()
+    completed = db.query(Task).filter(Task.status == "completed").count()
+    total_duration = db.query(func.sum(Task.duration_seconds)).scalar() or 0
+    
+    users_stats = db.query(
+        Task.completed_by,
+        func.count(Task.id),
+        func.sum(Task.duration_seconds)
+    ).filter(Task.status == "completed").group_by(Task.completed_by).all()
+    
+    users_data = []
+    for u in users_stats:
+        users_data.append({
+            "username": u[0],
+            "count": u[1],
+            "minutes": round(u[2] / 60, 2)
+        })
+
+    return {
+        "total_files": total_tasks,
+        "completed": completed,
+        "progress_percent": round((completed/total_tasks)*100, 2) if total_tasks > 0 else 0,
+        "total_minutes": round(total_duration / 60, 2),
+        "users": users_data
+    }
+
+@app.get("/api/admin/user_details/{username}")
+async def get_user_details(username: str, db: Session = Depends(get_db)):
+    tasks = db.query(Task).filter(Task.status == "completed", Task.completed_by == username).all()
+    data = []
+    for t in tasks:
+        data.append({
+            "filename": t.filename,
+            "text": t.normalized_text,
+            "duration": t.duration_seconds
+        })
+    return data
+
+@app.get("/api/admin/play/{filename}")
+async def play_audio(filename: str):
+    file_path = os.path.join(DATA_FOLDER, filename)
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
+    return HTTPException(status_code=404, detail="File not found")
+
+@app.delete("/api/admin/reset_all")
+async def reset_all_data(db: Session = Depends(get_db)):
+    # 1. Reset DB status
+    db.query(Task).update({
+        "status": "available",
+        "locked_by": None,
+        "locked_at": None,
+        "completed_by": None,
+        "completed_at": None,
+        "duration_seconds": 0.0
+    })
+    db.commit()
+    
+    # 2. Delete WAV files
+    wav_files = glob.glob(os.path.join(DATA_FOLDER, "*.wav"))
+    for f in wav_files:
+        try:
+            os.remove(f)
+        except Exception as e:
+            print(f"Failed to delete {f}: {e}")
+            
+    return {"status": "reset_complete"}
+
+@app.get("/api/admin/download")
+async def download_dataset(db: Session = Depends(get_db)):
+    zip_buffer = io.BytesIO()
+    completed_tasks = db.query(Task).filter(Task.status == "completed").all()
+    
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        csv_buffer = io.StringIO()
+        writer = csv.writer(csv_buffer, delimiter='|')
+        writer.writerow(["filename", "original_text", "normalized_text", "user", "duration"])
+        
+        for task in completed_tasks:
+            writer.writerow([task.filename, task.original_text, task.normalized_text, task.completed_by, task.duration_seconds])
+            wav_path = os.path.join(DATA_FOLDER, task.filename)
+            if os.path.exists(wav_path):
+                zip_file.write(wav_path, task.filename)
+        
+        zip_file.writestr("dataset_export.csv", csv_buffer.getvalue())
+
+    zip_buffer.seek(0)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+    return StreamingResponse(
+        zip_buffer, 
+        media_type="application/zip", 
+        headers={"Content-Disposition": f"attachment; filename=dataset_{timestamp}.zip"}
+    )
+--- End of D:\Disk D 13-09-25\CS\AI Guguta\ttsdatasetbuilder\voiceRecordingWebApp\app\main.py ---
+
+
+--- Start of D:\Disk D 13-09-25\CS\AI Guguta\ttsdatasetbuilder\voiceRecordingWebApp\app\static\index.html ---
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STT Recorder</title>
+    <style>
+        :root {
+            --bg-color: #1a1a2e;
+            --card-bg: #16213e;
+            --primary: #e94560;
+            --accent: #0f3460;
+            --text: #ffffff;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        .container {
+            width: 100%;
+            max-width: 700px;
+            text-align: center;
+            padding: 20px;
+        }
+        /* Login Screen */
+        #login-screen, #admin-screen {
+            background: var(--card-bg);
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        input[type="text"] {
+            padding: 15px;
+            border-radius: 8px;
+            border: none;
+            width: 70%;
+            margin-bottom: 20px;
+            font-size: 1.1em;
+        }
+        button {
+            padding: 12px 25px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 1em;
+            transition: transform 0.2s;
+        }
+        button:active { transform: scale(0.95); }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-success { background: #2ecc71; color: white; }
+        .btn-warn { background: #f39c12; color: white; }
+        .btn-danger { background: #e74c3c; color: white; }
+        .btn-sec { background: var(--accent); color: white; margin: 0 5px;}
+        .btn-sm { padding: 5px 10px; font-size: 0.8em; margin-left: 10px; cursor: pointer;}
+
+        /* Recording Screen */
+        .text-box {
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 12px;
+            font-size: 1.4em;
+            line-height: 1.5;
+            min-height: 100px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            border-left: 5px solid var(--primary);
+        }
+        .visualizer {
+            width: 100%;
+            height: 80px;
+            background: #0f3460;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        .controls { display: flex; justify-content: center; gap: 15px; margin-top: 20px; }
+        .record-btn {
+            width: 80px; height: 80px; border-radius: 50%;
+            background: var(--primary); border: 4px solid white;
+            cursor: pointer; box-shadow: 0 0 15px var(--primary);
+            display: flex; align-items: center; justify-content: center;
+        }
+        .record-btn.recording { animation: pulse 1.5s infinite; background: #ff0000; }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(233, 69, 96, 0.7); }
+            70% { box-shadow: 0 0 0 20px rgba(233, 69, 96, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(233, 69, 96, 0); }
+        }
+        .timer { font-size: 1.5em; margin-bottom: 10px; font-family: monospace; }
+        .status-msg { margin-top: 15px; min-height: 20px; color: #f39c12; }
+        
+        /* Admin Table */
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 0.9em; }
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #333; }
+        th { color: var(--primary); }
+        
+        /* Modal */
+        .modal {
+            display: none; position: fixed; z-index: 100; left: 0; top: 0;
+            width: 100%; height: 100%; background-color: rgba(0,0,0,0.8);
+        }
+        .modal-content {
+            background-color: var(--card-bg); margin: 5% auto; padding: 20px;
+            border: 1px solid #888; width: 80%; max-width: 600px;
+            border-radius: 10px; max-height: 80vh; overflow-y: auto;
+        }
+        .close-modal { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <!-- LOGIN -->
+    <div id="login-screen" class="container">
+        <h1>🎙️ STT Recorder</h1>
+        <p>Introduceți numele pentru a începe:</p>
+        <input type="text" id="username" placeholder="Numele tău">
+        <br>
+        <button class="btn-primary" onclick="startApp()">Start</button>
+    </div>
+
+    <!-- MAIN APP -->
+    <div id="app-screen" class="container" style="display: none;">
+        <div style="text-align: right; font-size: 0.9em; color: #888;">Utilizator: <span id="display-user"></span></div>
+        <div class="timer" id="timer">0.0s</div>
+        
+        <canvas id="visualizer" class="visualizer"></canvas>
+        
+        <div class="text-box" id="sentence-text">Se încarcă textul...</div>
+
+        <div style="display: flex; justify-content: center; align-items: center; flex-direction: column;">
+            <div id="record-btn" class="record-btn" onclick="toggleRecording()">
+                <div style="width: 20px; height: 20px; background: white; border-radius: 3px;"></div>
+            </div>
+            <div style="margin-top: 10px; color: #ccc;">Apasă pentru ÎNREGISTRARE / STOP</div>
+        </div>
+
+        <audio id="audio-playback" controls style="display: none; margin: 15px auto; width: 100%;"></audio>
+
+        <div class="controls">
+            <button class="btn-sec" onclick="skipTask()">Skip (S)</button>
+            <button class="btn-danger" id="discard-btn" onclick="discardRecording()" disabled>Discard (D)</button>
+            <button class="btn-success" id="save-btn" onclick="saveAndNext()" disabled>Save & Next (N)</button>
+        </div>
+        <div class="status-msg" id="status-msg"></div>
+    </div>
+
+    <!-- ADMIN -->
+    <div id="admin-screen" class="container" style="display: none; max-width: 900px; height: 90vh; overflow-y: auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h1>🛡️ Admin Panel</h1>
+            <button class="btn-danger btn-sm" onclick="resetAllData()">⚠️ RESET ALL DATA</button>
+        </div>
+        
+        <div style="display: flex; justify-content: space-around; margin-bottom: 20px; background: #0f3460; padding: 15px; border-radius: 10px;">
+            <div>Total: <strong id="stats-total">0</strong></div>
+            <div>Gata: <strong id="stats-completed">0</strong></div>
+            <div>%: <strong id="stats-percent">0%</strong></div>
+            <div>Min: <strong id="stats-minutes">0</strong></div>
+        </div>
+        
+        <div style="display:flex; gap:10px; margin-bottom: 20px;">
+            <input type="text" id="search-input" placeholder="Caută utilizator..." onkeyup="filterUsers()" style="margin:0; flex-grow:1;">
+            <button class="btn-primary" onclick="window.location.href='api/admin/download'">⬇️ Download ZIP</button>
+        </div>
+        
+        <table id="users-table">
+            <thead>
+                <tr>
+                    <th>Utilizator</th>
+                    <th>Fișiere</th>
+                    <th>Minute</th>
+                    <th>Acțiuni</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        <br>
+        <button class="btn-sec" onclick="location.reload()">Ieșire</button>
+    </div>
+
+    <!-- USER DETAILS MODAL -->
+    <div id="user-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal()">&times;</span>
+            <h2 id="modal-username">Detalii</h2>
+            <div id="modal-list"></div>
+        </div>
+    </div>
+
+    <script>
+        // CODUL SECRET PENTRU ADMIN
+        const ADMIN_SECRET = "Admin#Secret_2025!";
+
+        let username = "";
+        let currentTaskId = null;
+        let mediaRecorder;
+        let audioChunks = [];
+        let audioBlob = null;
+        let isRecording = false;
+        let startTime;
+        let timerInterval;
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let canvas, canvasCtx;
+
+        function startApp() {
+            username = document.getElementById('username').value.trim();
+            if (!username) return alert("Te rog introdu un nume.");
+
+            if (username === ADMIN_SECRET) {
+                showAdmin();
+            } else {
+                document.getElementById('login-screen').style.display = 'none';
+                document.getElementById('app-screen').style.display = 'block';
+                document.getElementById('display-user').innerText = username;
+                setupAudio();
+                loadTask();
+            }
+        }
+
+        async function loadTask() {
+            resetUI();
+            document.getElementById('sentence-text').innerHTML = "<i>Se caută o propoziție disponibilă...</i>";
+            
+            try {
+                const res = await fetch(`api/task?username=${encodeURIComponent(username)}`);
+                const data = await res.json();
+                
+                if (data.status === "done") {
+                    document.getElementById('sentence-text').innerHTML = "🎉 " + data.message;
+                    document.getElementById('record-btn').style.display = 'none';
+                    document.querySelector('.controls').style.display = 'none';
+                    return;
+                }
+
+                if (data.status === "wait") {
+                    document.getElementById('sentence-text').innerHTML = "⏳ " + data.message;
+                     // Reîncearcă automat după 5 secunde
+                    setTimeout(loadTask, 5000);
+                    return;
+                }
+                
+                currentTaskId = data.id;
+                document.getElementById('sentence-text').innerText = data.text;
+                document.getElementById('status-msg').innerText = `Fișier: ${data.filename}`;
+            } catch (e) {
+                console.error(e);
+                alert("Eroare la conectare server.");
+            }
+        }
+
+        async function saveAndNext() {
+            if (!audioBlob) return;
+            
+            const duration = document.getElementById('audio-playback').duration;
+            // Validare client-side
+            if (duration < 3 || duration > 30) {
+                document.getElementById('status-msg').innerText = "⚠️ Atenție: Durata trebuie să fie între 3 și 30 secunde!";
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("id", currentTaskId);
+            formData.append("username", username);
+            formData.append("file", audioBlob, "recording.webm");
+
+            const saveBtn = document.getElementById('save-btn');
+            saveBtn.innerText = "Saving...";
+            saveBtn.disabled = true;
+
+            try {
+                const res = await fetch("api/upload", { method: "POST", body: formData });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    loadTask(); // Aceasta va chema resetUI, care va repara textul butonului
+                } else {
+                    document.getElementById('status-msg').innerText = "Eroare: " + data.message;
+                    saveBtn.innerText = "Save & Next (N)";
+                    saveBtn.disabled = false;
+                }
+            } catch (e) {
+                alert("Eroare upload.");
+                saveBtn.innerText = "Save & Next (N)";
+                saveBtn.disabled = false;
+            }
+        }
+
+        async function skipTask() {
+            // Indiferent dacă există înregistrare sau nu, dăm discard local
+            audioBlob = null;
+            
+            // Notificăm serverul să deblocheze task-ul curent (dacă există)
+            if (currentTaskId) {
+                const formData = new FormData();
+                formData.append("id", currentTaskId);
+                try {
+                    await fetch("api/skip", { method: "POST", body: formData });
+                } catch(e) { console.error(e); }
+            }
+            
+            // Încărcăm imediat următorul
+            loadTask();
+        }
+
+        function discardRecording() {
+            audioBlob = null;
+            document.getElementById('audio-playback').style.display = 'none';
+            document.getElementById('save-btn').disabled = true;
+            document.getElementById('discard-btn').disabled = true;
+            document.getElementById('record-btn').style.display = 'flex';
+            document.getElementById('status-msg').innerText = "Înregistrare ștearsă. Încearcă din nou.";
+        }
+
+        function resetUI() {
+            audioChunks = [];
+            audioBlob = null;
+            document.getElementById('audio-playback').style.display = 'none';
+            document.getElementById('audio-playback').src = "";
+            
+            // Resetăm butoanele la starea inițială
+            const saveBtn = document.getElementById('save-btn');
+            saveBtn.innerText = "Save & Next (N)";
+            saveBtn.disabled = true;
+            
+            document.getElementById('discard-btn').disabled = true;
+            document.getElementById('record-btn').style.display = 'flex';
+            document.getElementById('timer').innerText = "0.0s";
+            document.getElementById('status-msg').innerText = "";
+        }
+
+        // --- AUDIO RECORDING ---
+        async function setupAudio() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                
+                mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+                mediaRecorder.onstop = () => {
+                    audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    const audioEl = document.getElementById('audio-playback');
+                    audioEl.src = audioUrl;
+                    audioEl.style.display = 'block';
+                    
+                    document.getElementById('save-btn').disabled = false;
+                    document.getElementById('discard-btn').disabled = false;
+                    document.getElementById('record-btn').style.display = 'none';
+                    
+                    audioEl.onloadedmetadata = () => {
+                       const dur = audioEl.duration;
+                       if(dur < 3 || dur > 30) {
+                           document.getElementById('status-msg').innerText = `⚠️ Durată invalidă (${dur.toFixed(1)}s). Trebuie 3-30s. Apasă Discard.`;
+                           document.getElementById('save-btn').disabled = true;
+                       } else {
+                           document.getElementById('status-msg').innerText = "Ascultă înregistrarea înainte de salvare.";
+                       }
+                    };
+                };
+
+                // Visualizer
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                source.connect(analyser);
+                analyser.fftSize = 256;
+                const bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+                
+                canvas = document.getElementById("visualizer");
+                canvasCtx = canvas.getContext("2d");
+                drawVisualizer();
+
+            } catch (e) {
+                alert("Nu am acces la microfon!");
+            }
+        }
+
+        function toggleRecording() {
+            if (!isRecording) {
+                audioChunks = [];
+                mediaRecorder.start();
+                isRecording = true;
+                document.getElementById('record-btn').classList.add('recording');
+                startTime = Date.now();
+                timerInterval = setInterval(updateTimer, 100);
+                document.getElementById('status-msg').innerText = "Înregistrare...";
+            } else {
+                mediaRecorder.stop();
+                isRecording = false;
+                document.getElementById('record-btn').classList.remove('recording');
+                clearInterval(timerInterval);
+            }
+        }
+
+        function updateTimer() {
+            const diff = (Date.now() - startTime) / 1000;
+            document.getElementById('timer').innerText = diff.toFixed(1) + "s";
+            if (diff >= 30.0) toggleRecording(); 
+        }
+
+        function drawVisualizer() {
+            requestAnimationFrame(drawVisualizer);
+            analyser.getByteFrequencyData(dataArray);
+            canvasCtx.fillStyle = '#0f3460';
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            const barWidth = (canvas.width / dataArray.length) * 2.5;
+            let x = 0;
+            for(let i = 0; i < dataArray.length; i++) {
+                const barHeight = dataArray[i] / 2;
+                canvasCtx.fillStyle = `rgb(${barHeight + 100}, 69, 96)`;
+                canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                x += barWidth + 1;
+            }
+        }
+
+        // --- SHORTCUTS ---
+        document.addEventListener('keydown', (e) => {
+            if(document.getElementById('app-screen').style.display === 'none') return;
+            if (e.key === 's' || e.key === 'S') skipTask();
+            if (e.key === 'd' || e.key === 'D') if(!document.getElementById('discard-btn').disabled) discardRecording();
+            if (e.key === 'n' || e.key === 'N') if(!document.getElementById('save-btn').disabled) saveAndNext();
+        });
+
+        // --- ADMIN FUNCTIONS ---
+        async function showAdmin() {
+            document.getElementById('login-screen').style.display = 'none';
+            document.getElementById('admin-screen').style.display = 'block';
+            
+            const res = await fetch('api/admin/stats');
+            const data = await res.json();
+            
+            document.getElementById('stats-total').innerText = data.total_files;
+            document.getElementById('stats-completed').innerText = data.completed;
+            document.getElementById('stats-percent').innerText = data.progress_percent + "%";
+            document.getElementById('stats-minutes').innerText = data.total_minutes;
+            
+            const tbody = document.querySelector('#users-table tbody');
+            tbody.innerHTML = "";
+            data.users.forEach(u => {
+                const tr = `<tr>
+                    <td class="user-name">${u.username}</td>
+                    <td>${u.count}</td>
+                    <td>${u.minutes}</td>
+                    <td><button class="btn-sec btn-sm" onclick="showUserRecordings('${u.username}')">Show</button></td>
+                </tr>`;
+                tbody.innerHTML += tr;
+            });
+        }
+
+        function filterUsers() {
+            const input = document.getElementById("search-input");
+            const filter = input.value.toUpperCase();
+            const table = document.getElementById("users-table");
+            const tr = table.getElementsByTagName("tr");
+
+            for (let i = 0; i < tr.length; i++) {
+                const td = tr[i].getElementsByClassName("user-name")[0];
+                if (td) {
+                    const txtValue = td.textContent || td.innerText;
+                    if (txtValue.toUpperCase().indexOf(filter) > -1) {
+                        tr[i].style.display = "";
+                    } else {
+                        tr[i].style.display = "none";
+                    }
+                }
+            }
+        }
+
+        async function showUserRecordings(user) {
+            document.getElementById('user-modal').style.display = "block";
+            document.getElementById('modal-username').innerText = `Înregistrări: ${user}`;
+            const list = document.getElementById('modal-list');
+            list.innerHTML = "Se încarcă...";
+            
+            const res = await fetch(`api/admin/user_details/${encodeURIComponent(user)}`);
+            const data = await res.json();
+            
+            list.innerHTML = "";
+            if (data.length === 0) list.innerHTML = "Nicio înregistrare.";
+            
+            data.forEach(item => {
+                const div = document.createElement('div');
+                div.style.marginBottom = "15px";
+                div.style.borderBottom = "1px solid #444";
+                div.style.paddingBottom = "10px";
+                div.innerHTML = `
+                    <div style="font-weight:bold; font-size:0.9em; margin-bottom:5px;">${item.filename} (${item.duration.toFixed(1)}s)</div>
+                    <div style="font-size:0.8em; color:#ccc; margin-bottom:5px;">${item.text}</div>
+                    <audio controls src="api/admin/play/${item.filename}" style="width:100%; height:30px;"></audio>
+                `;
+                list.appendChild(div);
+            });
+        }
+
+        function closeModal() {
+            document.getElementById('user-modal').style.display = "none";
+        }
+
+        async function resetAllData() {
+            const conf1 = confirm("⚠️ Ești sigur că vrei să ȘTERGI TOT? Această acțiune este ireversibilă.");
+            if (!conf1) return;
+            const conf2 = confirm("⚠️ Confirmă încă o dată: Se vor șterge toate fișierele audio și baza de date va fi resetată.");
+            if (!conf2) return;
+
+            const res = await fetch('api/admin/reset_all', { method: 'DELETE' });
+            if (res.ok) {
+                alert("Resetare completă cu succes.");
+                location.reload();
+            } else {
+                alert("Eroare la resetare.");
+            }
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            if (event.target == document.getElementById('user-modal')) {
+                closeModal();
+            }
+        }
+    </script>
+</body>
+</html>
+--- End of D:\Disk D 13-09-25\CS\AI Guguta\ttsdatasetbuilder\voiceRecordingWebApp\app\static\index.html ---
+
+

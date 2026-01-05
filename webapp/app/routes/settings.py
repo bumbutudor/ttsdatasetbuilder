@@ -172,6 +172,9 @@ class SettingsUpdate(BaseModel):
     ollama_model: Optional[str] = "gemma3:4b"
     openai_model: Optional[str] = "gpt-4o-mini"
     openai_api_key: Optional[str] = None
+
+    gemini_model: Optional[str] = "gemini-2.0-flash"
+    gemini_api_key: Optional[str] = None
     
     # Recording
     sample_rate: Optional[int] = 44100
@@ -242,6 +245,8 @@ async def save_settings(
     settings.ollama_model = settings_data.ollama_model
     settings.openai_model = settings_data.openai_model
     settings.openai_api_key = settings_data.openai_api_key
+    settings.gemini_model = settings_data.gemini_model
+    settings.gemini_api_key = settings_data.gemini_api_key
     settings.sample_rate = settings_data.sample_rate
     settings.silence_threshold = settings_data.silence_threshold
     settings.auto_trim = settings_data.auto_trim

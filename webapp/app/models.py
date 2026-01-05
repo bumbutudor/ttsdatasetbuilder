@@ -119,10 +119,13 @@ class ProjectSettings(Base):
     min_words = Column(Integer, default=5)
     
     # Vision LLM settings
-    ai_provider = Column(String(50), default="ollama")  # 'ollama' or 'openai'
+    ai_provider = Column(String(50), default="ollama")  # 'ollama', 'openai', 'gemini'
     ollama_model = Column(String(100), default="gemma3:4b")
     openai_model = Column(String(100), default="gpt-4o-mini")
     openai_api_key = Column(String(255))
+
+    gemini_model = Column(String(100), default="gemini-2.0-flash")
+    gemini_api_key = Column(String(255))
     
     # Whisper settings
     whisper_model = Column(String(200), default="iRaduS/whisper-romanian-finetune")
@@ -143,6 +146,8 @@ class ProjectSettings(Base):
             "ollama_model": self.ollama_model,
             "openai_model": self.openai_model,
             "openai_api_key": self.openai_api_key,
+            "gemini_model": self.gemini_model,
+            "gemini_api_key": self.gemini_api_key,
             "whisper_model": self.whisper_model,
             "min_segment_duration": self.min_segment_duration,
             "max_segment_duration": self.max_segment_duration,

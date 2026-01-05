@@ -1,11 +1,11 @@
 # TTS/STT Dataset Builder - GPU Version
+# syntax=docker/dockerfile:1.5
 FROM python:3.11-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
-ENV PIP_NO_CACHE_DIR=1
 
 # Install system dependencies
 # Adăugăm poppler-utils pentru pdf2image și git
@@ -24,11 +24,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy requirements
-COPY requirements.txt ./
+ARG REQUIREMENTS_FILE=requirements.txt
+COPY requirements.txt requirements-docker.txt ./
 
-# Install Python dependencies
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies (cached between builds with BuildKit)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    PIP_NO_CACHE_DIR=0 pip install --upgrade pip && \
+    PIP_NO_CACHE_DIR=0 pip install --default-timeout=1000 -r ${REQUIREMENTS_FILE}
 
 # Download Spacy Romanian Model (CRITIC PENTRU TEXT)
 RUN python -m spacy download ro_core_news_lg

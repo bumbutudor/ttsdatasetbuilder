@@ -38,6 +38,7 @@ openai>=1.10.0
 
 # Text Processing
 num2words>=0.5.12
+spacy>=3.7.0
 
 # Utilities
 python-dotenv>=1.0.0

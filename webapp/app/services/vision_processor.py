@@ -247,11 +247,58 @@ def process_image_with_openai(image_path: str, mode: str, model: Optional[str] =
         return ""
 
 
+def process_image_with_gemini(image_path: str, mode: str, model: Optional[str] = None, api_key: Optional[str] = None) -> str:
+    """Send image to Google Gemini API (google-genai SDK)."""
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        logger.error("google-genai library not installed")
+        return ""
+
+    if not api_key:
+        logger.error("Gemini API Key is missing")
+        return ""
+
+    system_prompt = SYSTEM_PROMPT_TTS if mode == "TTS" else SYSTEM_PROMPT_STT
+    model_name = model or "gemini-2.0-flash"
+
+    user_message = (
+        "Analizează această imagine (o pagină) și extrage TOT textul relevant. "
+        "Împarte în propoziții/segmente: o propoziție pe linie. "
+        "Returnează DOAR liniile CSV în format: TextBrut|TextNormalizat (2 coloane). "
+        "NU include titluri sau markdown. "
+        "NU folosi caracterul | în interiorul textului (doar ca separator între cele 2 coloane)."
+    )
+
+    try:
+        client = genai.Client(api_key=api_key)
+
+        image_bytes = _load_image_bytes(image_path, max_dim=1280)
+        image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+        prompt_text = system_prompt + "\n\n" + user_message
+
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[
+                types.Content(role="user", parts=[image_part, types.Part.from_text(prompt_text)])
+            ],
+        )
+
+        return getattr(response, "text", "") or ""
+
+    except Exception as e:
+        logger.error(f"Gemini error: {e}")
+        return ""
+
+
 def process_image(image_path: str, mode: str, provider: Optional[str] = None, model: Optional[str] = None, api_key: Optional[str] = None) -> str:
     """Dispatcher for image processing."""
     use_provider = provider or AI_PROVIDER
     if use_provider == "openai":
         return process_image_with_openai(image_path, mode, model, api_key)
+    if use_provider == "gemini":
+        return process_image_with_gemini(image_path, mode, model, api_key)
     return process_image_with_ollama(image_path, mode, model)
 
 

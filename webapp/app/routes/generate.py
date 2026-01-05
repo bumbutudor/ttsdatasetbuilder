@@ -185,15 +185,29 @@ def process_vision_task(
                 job.progress = overall
                 job.message = f"File {i+1}/{len(file_paths)}: {message}"
                 db.commit()
-            
+
+            # Determinăm modelul și cheia API corectă pe baza providerului
+            current_provider = settings.get('ai_provider', 'ollama')
+            current_model = None
+            current_api_key = None
+
+            if current_provider == 'ollama':
+                current_model = settings.get('ollama_model')
+            elif current_provider == 'openai':
+                current_model = settings.get('openai_model')
+                current_api_key = settings.get('openai_api_key')
+            elif current_provider == 'gemini':
+                current_model = settings.get('gemini_model')
+                current_api_key = settings.get('gemini_api_key')
+
             valid_count, csv_path = process_pdf_with_vision(
                 pdf_path,
                 project_folder,
                 project.dataset_type.value,
                 progress_callback,
-                provider=settings.get('ai_provider', 'ollama'),
-                model=settings.get('ollama_model') if settings.get('ai_provider') == 'ollama' else settings.get('openai_model'),
-                api_key=settings.get('openai_api_key')
+                provider=current_provider,
+                model=current_model,
+                api_key=current_api_key
             )
             total_valid += valid_count
         
@@ -327,7 +341,10 @@ async def generate_csv(
         'min_words': 5,
         'ai_provider': 'ollama',
         'ollama_model': 'gemma3:4b',
-        'openai_model': 'gpt-4o-mini'
+        'openai_model': 'gpt-4o-mini',
+        'openai_api_key': None,
+        'gemini_model': 'gemini-2.0-flash',
+        'gemini_api_key': None
     }
     
     # Create job

@@ -62,6 +62,7 @@
             <select name="ai_provider" id="ai_provider" class="form-control" onchange="toggleProviderSettings()">
                 <option value="ollama">Ollama (Local)</option>
                 <option value="openai">OpenAI API</option>
+                <option value="gemini">Google Gemini</option>
             </select>
         </div>
         
@@ -89,6 +90,23 @@
                 <input type="password" name="openai_api_key" id="openai_api_key" 
                        class="form-control" placeholder="sk-...">
                 <small class="text-muted">Your API key is stored securely and never shared</small>
+            </div>
+        </div>
+
+        <div id="gemini-settings" class="hidden">
+            <div class="form-group">
+                <label class="form-label">Gemini Model</label>
+                <input type="text" name="gemini_model" id="gemini_model" 
+                       class="form-control" placeholder="e.g., gemini-2.0-flash, gemini-1.5-pro" value="gemini-2.0-flash">
+                <small class="text-muted">
+                    <a href="https://ai.google.dev/models" target="_blank">See available models</a>. Recommended: <code>gemini-2.0-flash</code>
+                </small>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Gemini API Key</label>
+                <input type="password" name="gemini_api_key" id="gemini_api_key" 
+                       class="form-control" placeholder="AIzaSy...">
+                <small class="text-muted">Get your key from <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a></small>
             </div>
         </div>
     </div>
@@ -156,6 +174,7 @@ function toggleProviderSettings() {
     const provider = document.getElementById('ai_provider').value;
     document.getElementById('ollama-settings').classList.toggle('hidden', provider !== 'ollama');
     document.getElementById('openai-settings').classList.toggle('hidden', provider !== 'openai');
+    document.getElementById('gemini-settings').classList.toggle('hidden', provider !== 'gemini');
 }
 
 async function loadSettings() {
@@ -176,6 +195,8 @@ async function loadSettings() {
         if (settings.ollama_model) document.getElementById('ollama_model').value = settings.ollama_model;
         if (settings.openai_model) document.getElementById('openai_model').value = settings.openai_model;
         if (settings.openai_api_key) document.getElementById('openai_api_key').value = settings.openai_api_key;
+        if (settings.gemini_model) document.getElementById('gemini_model').value = settings.gemini_model;
+        if (settings.gemini_api_key) document.getElementById('gemini_api_key').value = settings.gemini_api_key;
         if (settings.sample_rate) document.getElementById('sample_rate').value = settings.sample_rate;
         if (settings.silence_threshold) document.getElementById('silence_threshold').value = settings.silence_threshold;
         if (settings.auto_trim !== undefined) document.getElementById('auto_trim').checked = settings.auto_trim;
@@ -207,6 +228,8 @@ async function saveSettings(event) {
         ollama_model: formData.get('ollama_model'),
         openai_model: formData.get('openai_model'),
         openai_api_key: formData.get('openai_api_key'),
+        gemini_model: formData.get('gemini_model'),
+        gemini_api_key: formData.get('gemini_api_key'),
         sample_rate: parseInt(formData.get('sample_rate')),
         silence_threshold: parseInt(formData.get('silence_threshold')),
         auto_trim: formData.get('auto_trim') === 'on'
@@ -237,6 +260,8 @@ function resetSettings() {
     document.getElementById('ollama_model').value = 'gemma3:4b';
     document.getElementById('openai_model').value = 'gpt-4o-mini';
     document.getElementById('openai_api_key').value = '';
+    document.getElementById('gemini_model').value = 'gemini-2.0-flash';
+    document.getElementById('gemini_api_key').value = '';
     document.getElementById('sample_rate').value = 44100;
     document.getElementById('silence_threshold').value = 30;
     document.getElementById('auto_trim').checked = true;

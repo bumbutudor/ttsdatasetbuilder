@@ -1,5 +1,4 @@
 # TTS/STT Dataset Builder - GPU Version
-# syntax=docker/dockerfile:1.5
 FROM python:3.11-slim
 
 # Set environment variables
@@ -27,10 +26,9 @@ WORKDIR /app
 ARG REQUIREMENTS_FILE=requirements.txt
 COPY requirements.txt requirements-docker.txt ./
 
-# Install Python dependencies (cached between builds with BuildKit)
-RUN --mount=type=cache,target=/root/.cache/pip \
-    PIP_NO_CACHE_DIR=0 pip install --upgrade pip && \
-    PIP_NO_CACHE_DIR=0 pip install --default-timeout=1000 -r ${REQUIREMENTS_FILE}
+# Install Python dependencies
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --default-timeout=1000 -r ${REQUIREMENTS_FILE}
 
 # Download Spacy Romanian Model (CRITIC PENTRU TEXT)
 RUN python -m spacy download ro_core_news_lg

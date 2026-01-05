@@ -268,7 +268,7 @@ function nextPage() {
 function playAudio(filename) {
     const projectId = getCurrentProjectId();
     const token = api.token;
-    const audioUrl = `/api/dataset/${projectId}/audio/${filename}?token=${encodeURIComponent(token)}`;
+    const audioUrl = withBase(`/api/dataset/${projectId}/audio/${filename}?token=${encodeURIComponent(token)}`);
     
     document.getElementById('audio-filename').textContent = filename;
     document.getElementById('audio-player').src = audioUrl;

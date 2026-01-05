@@ -111,38 +111,6 @@
         </div>
     </div>
     
-    <!-- Recording Settings -->
-    <div class="card mb-xl">
-        <h3 class="mb-lg">Voice Recording</h3>
-        <p class="text-muted text-small mb-lg">
-            Settings for the voice recorder.
-        </p>
-        
-        <div class="form-row">
-            <div class="form-group">
-                <label class="form-label">Sample Rate</label>
-                <select name="sample_rate" id="sample_rate" class="form-control">
-                    <option value="44100" selected>44100 Hz (CD Quality)</option>
-                    <option value="48000">48000 Hz (Professional)</option>
-                    <option value="22050">22050 Hz (Economy)</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label class="form-label">Silence Threshold (dB)</label>
-                <input type="number" name="silence_threshold" id="silence_threshold" 
-                       class="form-control" value="30" min="10" max="60">
-                <small class="text-muted">Higher = more aggressive silence trimming</small>
-            </div>
-        </div>
-        
-        <div class="form-group">
-            <label class="form-check">
-                <input type="checkbox" name="auto_trim" id="auto_trim" checked>
-                <span>Automatically trim silence from recordings</span>
-            </label>
-        </div>
-    </div>
-    
     <!-- Save Button -->
     <div class="flex gap-md" style="justify-content: flex-end;">
         <button type="button" class="btn btn-secondary" onclick="resetSettings()">Reset to Defaults</button>
@@ -197,9 +165,7 @@ async function loadSettings() {
         if (settings.openai_api_key) document.getElementById('openai_api_key').value = settings.openai_api_key;
         if (settings.gemini_model) document.getElementById('gemini_model').value = settings.gemini_model;
         if (settings.gemini_api_key) document.getElementById('gemini_api_key').value = settings.gemini_api_key;
-        if (settings.sample_rate) document.getElementById('sample_rate').value = settings.sample_rate;
-        if (settings.silence_threshold) document.getElementById('silence_threshold').value = settings.silence_threshold;
-        if (settings.auto_trim !== undefined) document.getElementById('auto_trim').checked = settings.auto_trim;
+        
         
         toggleProviderSettings();
         
@@ -229,10 +195,7 @@ async function saveSettings(event) {
         openai_model: formData.get('openai_model'),
         openai_api_key: formData.get('openai_api_key'),
         gemini_model: formData.get('gemini_model'),
-        gemini_api_key: formData.get('gemini_api_key'),
-        sample_rate: parseInt(formData.get('sample_rate')),
-        silence_threshold: parseInt(formData.get('silence_threshold')),
-        auto_trim: formData.get('auto_trim') === 'on'
+        gemini_api_key: formData.get('gemini_api_key')
     };
     
     try {
@@ -262,9 +225,6 @@ function resetSettings() {
     document.getElementById('openai_api_key').value = '';
     document.getElementById('gemini_model').value = 'gemini-2.0-flash';
     document.getElementById('gemini_api_key').value = '';
-    document.getElementById('sample_rate').value = 44100;
-    document.getElementById('silence_threshold').value = 30;
-    document.getElementById('auto_trim').checked = true;
     
     toggleProviderSettings();
     ui.showAlert('Settings reset to defaults', 'info');

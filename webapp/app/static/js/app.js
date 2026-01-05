@@ -89,7 +89,7 @@ window.api = {
             headers['Authorization'] = `Bearer ${this.token}`;
         }
         
-        return fetch(endpoint, {
+        return fetch(withBase(endpoint), {
             method: 'POST',
             headers,
             body: formData

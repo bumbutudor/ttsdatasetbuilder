@@ -311,7 +311,7 @@ async function downloadDataset() {
     }
     
     const token = api.token;
-    window.location.href = `/api/projects/${projectId}/download?token=${encodeURIComponent(token)}`;
+    window.location.href = withBase(`/api/projects/${projectId}/download?token=${encodeURIComponent(token)}`);
 }
 
 async function reloadFromCSV() {

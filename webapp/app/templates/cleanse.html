@@ -254,7 +254,8 @@ async function downloadDataset() {
         return;
     }
     
-    window.location.href = `/api/projects/${projectId}/download`;
+    const token = api.token;
+    window.location.href = withBase(`/api/projects/${projectId}/download?token=${encodeURIComponent(token)}`);
 }
 
 // Override project change to reload data

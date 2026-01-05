@@ -97,7 +97,7 @@ let totalEntries = 0;
 
 document.addEventListener('DOMContentLoaded', () => {
     if (!api.isAuthenticated()) {
-        window.location.href = '/login';
+        window.location.href = withBase('/login');
         return;
     }
     

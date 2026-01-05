@@ -10,8 +10,13 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     
-    <!-- Styles -->
-    <link rel="stylesheet" href="/static/css/style.css?v=2">
+    <!-- Styles - use full path with prefix for nginx routing -->
+    <link rel="stylesheet" href="/datasetBuilder/static/css/style.css?v=3">
+
+    <script>
+        // Base path when running behind the unified reverse proxy
+        window.__APP_BASE_PATH__ = "/datasetBuilder";
+    </script>
     
     {% block head %}{% endblock %}
 </head>
@@ -19,7 +24,7 @@
     {% block body %}{% endblock %}
     
     <!-- Scripts -->
-    <script src="/static/js/app.js?v=2"></script>
+    <script src="/datasetBuilder/static/js/app.js?v=3"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -1,23 +1,28 @@
 """Main FastAPI application."""
 import logging
+import os
 
 # Ensure module loggers at INFO are printed to stdout (so container logs show our logger.info)
 logging.basicConfig(level=logging.INFO)
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
 from app.database import init_db
 from app.routes import auth, projects, files, generate, normalize, recorder, video, cleanse, dataset, settings, jobs
 
-# Initialize FastAPI app
+# Read ROOT_PATH from environment (set by docker-compose for reverse proxy support)
+root_path = os.getenv("ROOT_PATH", "")
+
+# Initialize FastAPI app - DO NOT use root_path for now to debug static files
 app = FastAPI(
     title="TTS/STT Dataset Builder",
     description="Web application for creating TTS and STT datasets",
     version="2.0.0"
+    # root_path=root_path  # Disabled temporarily
 )
 
 # CORS middleware
@@ -31,8 +36,27 @@ app.add_middleware(
 
 # Static files and templates
 BASE_DIR = Path(__file__).resolve().parent
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
-templates = Jinja2Templates(directory=BASE_DIR / "templates")
+STATIC_DIR = BASE_DIR / "static"
+
+# Log static directory for debugging
+logger = logging.getLogger(__name__)
+logger.info(f"BASE_DIR: {BASE_DIR}")
+logger.info(f"STATIC_DIR: {STATIC_DIR}")
+logger.info(f"STATIC_DIR exists: {STATIC_DIR.exists()}")
+logger.info(f"STATIC_DIR is_dir: {STATIC_DIR.is_dir()}")
+if STATIC_DIR.exists():
+    logger.info(f"STATIC_DIR contents: {list(STATIC_DIR.iterdir())}")
+
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+# Explicit static file routes (workaround for mount issues)
+@app.api_route("/static/{file_path:path}", methods=["GET", "HEAD"])
+async def serve_static(file_path: str):
+    """Serve static files."""
+    full_path = STATIC_DIR / file_path
+    if full_path.exists() and full_path.is_file():
+        return FileResponse(full_path)
+    return {"detail": "Not Found"}, 404
 
 # Include API routes
 app.include_router(auth.router)
@@ -133,6 +157,9 @@ async def settings_page(request: Request):
 async def health_check():
     """Health check endpoint for Docker."""
     return {"status": "healthy"}
+
+
+# Note: Static files are now served via explicit route above
 
 
 if __name__ == "__main__":

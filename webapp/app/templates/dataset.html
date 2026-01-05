@@ -8,7 +8,7 @@
     <div class="flex flex-between items-center">
         <div>
             <h1>📊 View Dataset</h1>
-            <p>Browse and manage your dataset entries. Entries without audio need to be recorded in <a href="/recorder" style="color: var(--color-accent);">Voice Recorder</a>.</p>
+            <p>Browse and manage your dataset entries. Entries without audio need to be recorded in <a href="/datasetBuilder/recorder" style="color: var(--color-accent);">Voice Recorder</a>.</p>
         </div>
         <div class="flex gap-md">
             <button class="btn btn-secondary" onclick="reloadFromCSV()">
@@ -139,7 +139,7 @@ let searchTimeout = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     if (!api.isAuthenticated()) {
-        window.location.href = '/login';
+        window.location.href = withBase('/login');
         return;
     }
     

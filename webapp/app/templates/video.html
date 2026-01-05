@@ -308,7 +308,7 @@ function renderSegments() {
     tbody.innerHTML = segmentsData.map(s => `
         <tr>
             <td>
-                <audio controls src="/api/video/${getCurrentProjectId()}/staging/${currentStagingId}/audio/${s.filename}"></audio>
+                <audio controls src="${withBase(`/api/video/${getCurrentProjectId()}/staging/${currentStagingId}/audio/${s.filename}`)}"></audio>
             </td>
             <td>${s.filename}</td>
             <td>${s.duration}s</td>
@@ -369,7 +369,7 @@ function renderTranscripts() {
         <tr id="row-${idx}" class="fade-in">
             <td width="200">
                 <!-- Audio Player mai compact -->
-                <audio src="/api/video/${getCurrentProjectId()}/staging/${currentStagingId}/audio/${t.filename}" 
+                <audio src="${withBase(`/api/video/${getCurrentProjectId()}/staging/${currentStagingId}/audio/${t.filename}`)}" 
                        controls 
                        style="width: 100%; height: 40px; margin-top: 5px;"></audio>
                 <div class="text-muted text-small mt-sm text-center">${t.filename}</div>
@@ -422,7 +422,7 @@ async function commitDataset() {
     const res = await api.post(`/api/video/${projectId}/commit`, body);
     if(res.ok) {
         ui.showAlert("Dataset updated successfully!", "success");
-        setTimeout(() => window.location.href = '/dataset', 1000);
+        setTimeout(() => window.location.href = withBase('/dataset'), 1000);
     }
 }
 

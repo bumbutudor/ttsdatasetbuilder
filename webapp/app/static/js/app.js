@@ -2,6 +2,30 @@
  * TTS/STT Dataset Builder - Frontend JavaScript
  */
 
+// Base path when the app is served behind a reverse proxy (e.g. /datasetBuilder)
+window.APP_BASE_PATH = window.__APP_BASE_PATH__ || '';
+
+function withBase(path) {
+    const base = window.APP_BASE_PATH;
+    if (!base || !path) return path;
+
+    // Don't touch absolute URLs
+    if (typeof path === 'string' && (path.startsWith('http://') || path.startsWith('https://'))) {
+        return path;
+    }
+
+    // Already prefixed
+    if (typeof path === 'string' && path.startsWith(base + '/')) {
+        return path;
+    }
+
+    if (typeof path === 'string' && path.startsWith('/')) {
+        return base + path;
+    }
+
+    return base + '/' + path;
+}
+
 // ============== API Helper ==============
 window.api = {
     token: localStorage.getItem('token'),
@@ -16,14 +40,14 @@ window.api = {
             headers['Authorization'] = `Bearer ${this.token}`;
         }
         
-        const response = await fetch(endpoint, {
+        const response = await fetch(withBase(endpoint), {
             ...options,
             headers
         });
         
         if (response.status === 401) {
             this.logout();
-            window.location.href = '/login';
+            window.location.href = withBase('/login');
             throw new Error('Unauthorized');
         }
         
@@ -220,7 +244,7 @@ async function handleLogin(event) {
     
     try {
         const formData = new FormData(form);
-        const response = await fetch('/api/auth/login', {
+        const response = await fetch(withBase('/api/auth/login'), {
             method: 'POST',
             body: formData
         });
@@ -232,7 +256,7 @@ async function handleLogin(event) {
         
         const data = await response.json();
         api.setToken(data.access_token);
-        window.location.href = '/dashboard';
+        window.location.href = withBase('/dashboard');
     } catch (error) {
         ui.showAlert(error.message, 'error');
     } finally {
@@ -270,7 +294,7 @@ async function handleRegister(event) {
         }
         
         ui.showAlert('Registration successful! Please login.');
-        setTimeout(() => window.location.href = '/login', 1500);
+        setTimeout(() => window.location.href = withBase('/login'), 1500);
     } catch (error) {
         ui.showAlert(error.message, 'error');
     } finally {
@@ -280,7 +304,7 @@ async function handleRegister(event) {
 
 function logout() {
     api.logout();
-    window.location.href = '/login';
+    window.location.href = withBase('/login');
 }
 
 // ============== File Upload ==============

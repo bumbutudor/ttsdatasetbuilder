@@ -117,7 +117,7 @@
             <li>• Max sentence length: <strong id="setting-max-len">100</strong> chars</li>
             <li>• Min words: <strong id="setting-min-words">5</strong></li>
         </ul>
-        <a href="/settings" class="btn btn-sm btn-outline mt-md">Change Settings</a>
+        <a href="/datasetBuilder/settings" class="btn btn-sm btn-outline mt-md">Change Settings</a>
     </div>
 </div>
 {% endblock %}
@@ -129,7 +129,7 @@ let pendingModelName = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     if (!api.isAuthenticated()) {
-        window.location.href = '/login';
+        window.location.href = withBase('/login');
         return;
     }
     
@@ -278,7 +278,7 @@ function updateMethodInfo() {
                     <li>• Max sentence length: <strong id="setting-max-len">100</strong> chars</li>
                     <li>• Min words: <strong id="setting-min-words">5</strong></li>
                 </ul>
-                <a href="/settings" class="btn btn-sm btn-outline mt-md">Change Settings</a>
+                <a href="/datasetBuilder/settings" class="btn btn-sm btn-outline mt-md">Change Settings</a>
             </div>
         `;
     } else {
@@ -294,7 +294,7 @@ function updateMethodInfo() {
                     <li>• Provider: <strong id="setting-provider">Ollama</strong></li>
                     <li>• Model: <strong id="setting-model">gemma3:4b</strong></li>
                 </ul>
-                <a href="/settings" class="btn btn-sm btn-outline mt-md">Change Settings</a>
+                <a href="/datasetBuilder/settings" class="btn btn-sm btn-outline mt-md">Change Settings</a>
             </div>
             <div class="alert alert-warning mt-lg" style="position: relative;">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">

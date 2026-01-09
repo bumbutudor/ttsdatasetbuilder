@@ -62,7 +62,7 @@ init_db()
 def convert_audio(input_path, output_path):
     command = [
         "ffmpeg", "-y", "-i", input_path,
-        "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+        "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le",
         output_path
     ]
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -74,6 +74,17 @@ def get_audio_duration(file_path):
         return float(result.stdout.strip())
     except:
         return 0.0
+
+def _validate_safe_filename(filename: str) -> str:
+    # Prevent path traversal or nested paths
+    if not filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if any(sep in filename for sep in ("/", "\\")):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    # Also block parent-dir tricks
+    if filename in (".", "..") or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    return filename
 
 # --- ROUTES ---
 
@@ -259,3 +270,55 @@ async def download_dataset(db: Session = Depends(get_db)):
         media_type="application/zip", 
         headers={"Content-Disposition": f"attachment; filename=dataset_{timestamp}.zip"}
     )
+
+# --- ADĂUGARE PENTRU ADMIN DELETE ---
+
+@app.delete("/api/admin/delete_task/{filename}")
+async def delete_task_recording(filename: str, db: Session = Depends(get_db)):
+    filename = _validate_safe_filename(filename)
+
+    task = db.query(Task).filter(Task.filename == filename).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task.status = "available"
+    task.completed_by = None
+    task.completed_at = None
+    task.locked_by = None
+    task.locked_at = None
+    task.duration_seconds = 0.0
+    db.commit()
+
+    file_path = os.path.join(DATA_FOLDER, filename)
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            print(f"Error deleting file: {e}")
+
+    return {"status": "deleted", "filename": filename}
+
+
+@app.delete("/api/admin/delete_user_all/{username}")
+async def delete_user_all_recordings(username: str, db: Session = Depends(get_db)):
+    tasks = db.query(Task).filter(Task.completed_by == username, Task.status == "completed").all()
+    count = 0
+
+    for task in tasks:
+        task.status = "available"
+        task.completed_by = None
+        task.completed_at = None
+        task.locked_by = None
+        task.locked_at = None
+        task.duration_seconds = 0.0
+
+        file_path = os.path.join(DATA_FOLDER, task.filename)
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+        count += 1
+
+    db.commit()
+    return {"status": "deleted_all", "count": count, "username": username}

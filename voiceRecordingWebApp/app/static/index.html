@@ -121,6 +121,10 @@
         <h1>🎙️ STT Recorder</h1>
         <p>Introduceți numele pentru a începe:</p>
         <input type="text" id="username" placeholder="Numele tău">
+
+        <p style="font-size: 0.85em; color: #aaa; margin-top: -10px; margin-bottom: 20px; line-height: 1.4;">
+            * Înregistrările vocale vor fi utilizate la antrenarea modelelor naționale de recunoaștere și sinteză vocală.
+        </p>
         <br>
         <button class="btn-primary" onclick="startApp()">Start</button>
     </div>
@@ -477,28 +481,88 @@
 
         async function showUserRecordings(user) {
             document.getElementById('user-modal').style.display = "block";
-            document.getElementById('modal-username').innerText = `Înregistrări: ${user}`;
+            document.getElementById('modal-username').innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>Înregistrări: ${user}</span>
+                    <button class="btn-danger btn-sm" onclick="deleteAllUser('${user}')">Șterge TOATE</button>
+                </div>
+            `;
+
             const list = document.getElementById('modal-list');
             list.innerHTML = "Se încarcă...";
-            
-            const res = await fetch(`api/admin/user_details/${encodeURIComponent(user)}`);
-            const data = await res.json();
-            
-            list.innerHTML = "";
-            if (data.length === 0) list.innerHTML = "Nicio înregistrare.";
-            
-            data.forEach(item => {
-                const div = document.createElement('div');
-                div.style.marginBottom = "15px";
-                div.style.borderBottom = "1px solid #444";
-                div.style.paddingBottom = "10px";
-                div.innerHTML = `
-                    <div style="font-weight:bold; font-size:0.9em; margin-bottom:5px;">${item.filename} (${item.duration.toFixed(1)}s)</div>
-                    <div style="font-size:0.8em; color:#ccc; margin-bottom:5px;">${item.text}</div>
-                    <audio controls src="api/admin/play/${item.filename}" style="width:100%; height:30px;"></audio>
-                `;
-                list.appendChild(div);
-            });
+
+            try {
+                const res = await fetch(`api/admin/user_details/${encodeURIComponent(user)}`);
+                const data = await res.json();
+
+                list.innerHTML = "";
+                if (data.length === 0) {
+                    list.innerHTML = "Nicio înregistrare găsită.";
+                    return;
+                }
+
+                data.forEach(item => {
+                    const div = document.createElement('div');
+                    const rowId = 'row-' + item.filename.replaceAll('.', '-');
+
+                    div.id = rowId;
+                    div.style.marginBottom = "15px";
+                    div.style.borderBottom = "1px solid #444";
+                    div.style.paddingBottom = "10px";
+                    div.style.display = "flex";
+                    div.style.flexDirection = "column";
+                    div.style.gap = "5px";
+
+                    div.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-weight:bold; font-size:0.9em; color: #e94560;">${item.filename} (${item.duration.toFixed(1)}s)</span>
+                            <button class="btn-danger btn-sm" onclick="deleteTask('${item.filename}', '${rowId}')">Șterge</button>
+                        </div>
+                        <div style="font-size:0.8em; color:#ccc;">${item.text}</div>
+                        <audio controls src="api/admin/play/${item.filename}" style="width:100%; height:30px; margin-top:5px;"></audio>
+                    `;
+                    list.appendChild(div);
+                });
+            } catch (e) {
+                list.innerHTML = "Eroare la încărcarea datelor.";
+            }
+        }
+
+        async function deleteTask(filename, rowId) {
+            if(!confirm(`Ești sigur că vrei să ștergi înregistrarea ${filename}?`)) return;
+
+            try {
+                const res = await fetch(`api/admin/delete_task/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+                if (res.ok) {
+                    const el = document.getElementById(rowId);
+                    if(el) el.remove();
+                } else {
+                    alert("Eroare la ștergere.");
+                }
+            } catch(e) {
+                console.error(e);
+                alert("Eroare de conexiune.");
+            }
+        }
+
+        async function deleteAllUser(user) {
+            if(!confirm(`⚠️ ATENȚIE: Ești sigur că vrei să ștergi TOATE înregistrările utilizatorului ${user}?`)) return;
+
+            try {
+                const res = await fetch(`api/admin/delete_user_all/${encodeURIComponent(user)}`, { method: 'DELETE' });
+                const data = await res.json();
+
+                if (res.ok) {
+                    alert(`S-au șters ${data.count} înregistrări.`);
+                    closeModal();
+                    showAdmin();
+                } else {
+                    alert("Eroare la ștergere.");
+                }
+            } catch(e) {
+                console.error(e);
+                alert("Eroare de conexiune.");
+            }
         }
 
         function closeModal() {

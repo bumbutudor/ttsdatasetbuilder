@@ -89,8 +89,8 @@
         <div class="form-group">
             <label class="form-label">Sample Rate</label>
             <select id="sample-rate" class="form-control">
-                <option value="44100" selected>44100 Hz (Standard)</option>
-                <option value="48000">48000 Hz (High Quality)</option>
+                <option value="44100">44100 Hz (TTS Standard)</option>
+                <option value="16000">16000 Hz (STT Standard)</option>
             </select>
         </div>
     </div>
@@ -252,6 +252,14 @@ async function loadSentences() {
         currentDatasetType = project.dataset_type;
         maxDurationSeconds = project.dataset_type === 'STT' ? 30 : 10;
         document.getElementById('max-duration').textContent = `${maxDurationSeconds}s`;
+
+        // Auto-select sample rate based on dataset type
+        const sampleRateSelect = document.getElementById('sample-rate');
+        if (project.dataset_type === 'STT') {
+            sampleRateSelect.value = '16000';
+        } else {
+            sampleRateSelect.value = '44100';
+        }
         
     } catch (error) {
         ui.showAlert(error.message, 'error');

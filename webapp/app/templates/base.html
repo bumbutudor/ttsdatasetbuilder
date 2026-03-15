@@ -11,11 +11,11 @@
     <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     
     <!-- Styles - use full path with prefix for nginx routing -->
-    <link rel="stylesheet" href="/static/css/style.css?v=3">
+    <link rel="stylesheet" href="{{ root_path }}/static/css/style.css?v=3">
 
     <script>
-        // Base path when running behind the unified reverse proxy
-        window.__APP_BASE_PATH__ = "";
+        // Base path strictly bound to python's ROOT_PATH var
+        window.__APP_BASE_PATH__ = "{{ root_path }}";
         
         // Define withBase early so inline scripts can use it
         window.withBase = function(path) {
@@ -40,7 +40,7 @@
     {% block body %}{% endblock %}
     
     <!-- Scripts -->
-    <script src="/static/js/app.js?v=3"></script>
+    <script src="{{ root_path }}/static/js/app.js?v=3"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

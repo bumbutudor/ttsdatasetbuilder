@@ -244,9 +244,14 @@ async function handleLogin(event) {
     
     try {
         const formData = new FormData(form);
+        const urlEncodedData = new URLSearchParams(formData).toString();
+        
         const response = await fetch(withBase('/api/auth/login'), {
             method: 'POST',
-            body: formData
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: urlEncodedData
         });
         
         if (!response.ok) {

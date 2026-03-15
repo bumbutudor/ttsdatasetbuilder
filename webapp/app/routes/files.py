@@ -333,16 +333,46 @@ async def import_from_url(
         
     upload_folder = UPLOAD_DIR / f"project_{project_id}"
     
-    # Rulăm sincron deoarece yt-dlp poate dura, ideal ar fi background task 
-    # dar pentru simplitate îl ținem aici (sau mută în background tasks cum e la split)
-    result = download_media_from_url(request.url, str(upload_folder))
+    if "educatieonline.md" in request.url:
+        from app.services.educatie_scraper import extract_youtube_urls_from_educatieonline
+        try:
+            urls = extract_youtube_urls_from_educatieonline(request.url)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+            
+        if not urls:
+            raise HTTPException(status_code=400, detail="No YouTube videos found on page")
+            
+        successful = 0
+        last_error = ""
+        last_filename = ""
+        for u in urls:
+            res = download_media_from_url(u, str(upload_folder))
+            if res.get('success'):
+                successful += 1
+                last_filename = res.get('filename')
+            else:
+                last_error = res.get('error', "Unknown error")
+                
+        if successful == 0:
+            raise HTTPException(status_code=400, detail=f"Failed to download any video. Last error: {last_error}")
+            
+        return {
+            "message": f"Successfully imported {successful} videos from EducatieOnline",
+            "filename": f"{successful} files downloaded (last: {last_filename})",
+            "title": f"Bulk import: {successful} videos"
+        }
     
-    if not result['success']:
-        raise HTTPException(status_code=400, detail=f"Download failed: {result.get('error')}")
+    else:
+        # Păstrăm fluxul clasic pentru un singur link de YouTube
+        result = download_media_from_url(request.url, str(upload_folder))
         
-    return {
-        "message": "Download successful",
-        "filename": result['filename'],
-        "title": result['title']
-    }
+        if not result['success']:
+            raise HTTPException(status_code=400, detail=f"Download failed: {result.get('error')}")
+            
+        return {
+            "message": "Download successful",
+            "filename": result['filename'],
+            "title": result['title']
+        }
 

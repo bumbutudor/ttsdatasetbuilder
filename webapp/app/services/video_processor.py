@@ -139,6 +139,16 @@ def download_media_from_url(url: str, output_folder: str) -> dict:
         'outtmpl': f'{output_folder}/%(title)s.%(ext)s',
         'restrictfilenames': True,  # Evită caractere speciale în nume
         'noplaylist': True,
+        # Setările din scriptul userului pentru a evita eroarea "This video is not available"
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web', 'mweb', 'tv']
+            }
+        },
+        'retries': 10,
+        'file_access_retries': 10,
+        'fragment_retries': 10,
+        # S-a eliminat ignoreerrors pentru a putea arunca excepția corectă în loc de NoneType
     }
 
     try:

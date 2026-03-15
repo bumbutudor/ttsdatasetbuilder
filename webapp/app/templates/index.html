@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}TTS/STT Dataset Builder{% endblock %}
+
+{% block body %}
+<div class="auth-container">
+    <div class="auth-card" style="max-width: 600px; text-align: center;">
+        <div class="auth-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+        </div>
+        
+        <div class="auth-header">
+            <h1>TTS/STT Dataset Builder</h1>
+            <p>Create high-quality speech datasets for Text-to-Speech and Speech-to-Text models</p>
+        </div>
+        
+        <div style="margin-bottom: 2rem;">
+            <p class="text-muted">
+                A collaborative platform for researchers to build and manage speech datasets.
+                Upload documents, videos, and create transcription datasets for Romanian language models.
+            </p>
+        </div>
+        
+        <div class="flex flex-center gap-lg">
+            <a href="/login" class="btn btn-primary btn-lg">
+                Sign In
+            </a>
+            <a href="/register" class="btn btn-secondary btn-lg">
+                Create Account
+            </a>
+        </div>
+        
+        <div class="mt-xl text-muted" style="font-size: 0.85rem;">
+            <p>Features:</p>
+            <ul style="list-style: none; margin-top: 0.5rem;">
+                <li>📄 PDF & Text document processing</li>
+                <li>🎥 Video transcription with Whisper</li>
+                <li>🤖 Vision AI for complex documents</li>
+                <li>📊 Dataset management & export</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

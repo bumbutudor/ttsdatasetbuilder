@@ -1,0 +1,250 @@
+{% extends "app_layout.html" %}
+{% set active_page = 'normalize' %}
+
+{% block title %}Normalize Text - Dataset Builder{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>✏️ Normalize Text</h1>
+    <p>Apply text normalization rules to your dataset for TTS or STT training.</p>
+</div>
+
+<!-- Normalization Type -->
+<div class="grid-2 mb-xl">
+    <div class="card">
+        <h3 class="mb-md">TTS Normalization</h3>
+        <p class="text-muted text-small mb-lg">
+            Expands abbreviations, converts numbers to words, removes brackets, expands math symbols.
+            Best for Text-to-Speech training.
+        </p>
+        <ul class="text-muted text-small" style="list-style: none;">
+            <li>✓ "dl." → "domnul"</li>
+            <li>✓ "10" → "zece"</li>
+            <li>✓ "+" → "plus"</li>
+            <li>✓ "%" → "la sută"</li>
+        </ul>
+        <button class="btn btn-primary w-full mt-lg" onclick="normalizeDataset('tts')">
+            Apply TTS Normalization
+        </button>
+    </div>
+    
+    <div class="card">
+        <h3 class="mb-md">STT Normalization</h3>
+        <p class="text-muted text-small mb-lg">
+            Keeps numbers as digits, standardizes quotes and punctuation, removes citations.
+            Best for Speech-to-Text (Whisper) training.
+        </p>
+        <ul class="text-muted text-small" style="list-style: none;">
+            <li>✓ Keeps numbers: "10", "1990"</li>
+            <li>✓ Standardizes quotes: „text"</li>
+            <li>✓ Removes [citations]</li>
+            <li>✓ Fixes spacing</li>
+        </ul>
+        <button class="btn btn-primary w-full mt-lg" onclick="normalizeDataset('stt')">
+            Apply STT Normalization
+        </button>
+    </div>
+</div>
+
+<!-- Processing Status -->
+<div id="normalize-status" class="card mb-xl hidden">
+    <h3 class="mb-lg">Normalization Progress</h3>
+    <div class="progress">
+        <div class="progress-bar" id="normalize-progress" style="width: 0%"></div>
+    </div>
+    <p class="text-muted mt-md" id="normalize-message">Processing...</p>
+</div>
+
+<!-- Dataset Preview -->
+<div class="card">
+    <div class="card-header">
+        <h3>Dataset Preview</h3>
+    </div>
+    
+    <div class="table-container">
+        <table class="table-full-text">
+            <thead>
+                <tr>
+                    <th style="width: 120px;">Filename</th>
+                    <th>Original Text</th>
+                    <th>Normalized Text</th>
+                </tr>
+            </thead>
+            <tbody id="dataset-preview">
+                <tr>
+                    <td colspan="3" class="text-center text-muted">Select a project to preview dataset</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="mt-lg flex flex-between items-center">
+        <span class="text-muted">Showing <span id="preview-count">0</span> entries</span>
+        <div class="flex gap-md">
+            <button class="btn btn-sm btn-secondary" onclick="prevPage()" id="prev-btn" disabled>← Previous</button>
+            <span class="text-muted">Page <span id="current-page">1</span></span>
+            <button class="btn btn-sm btn-secondary" onclick="nextPage()" id="next-btn" disabled>Next →</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 1;
+const perPage = 20;
+let totalEntries = 0;
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (!api.isAuthenticated()) {
+        window.location.href = withBase('/login');
+        return;
+    }
+    
+    loadProjectSelector();
+});
+
+async function normalizeDataset(type) {
+    const projectId = getCurrentProjectId();
+    if (!projectId) {
+        ui.showAlert('Please select a project first', 'warning');
+        return;
+    }
+    
+    const statusDiv = document.getElementById('normalize-status');
+    statusDiv.classList.remove('hidden');
+    
+    try {
+        const response = await api.post(`/api/normalize/${projectId}`, {
+            type: type
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Normalization failed');
+        }
+        
+        const result = await response.json();
+        
+        if (result.job_id) {
+            pollNormalizationStatus(result.job_id);
+        } else {
+            ui.showAlert(`Normalization complete! ${result.normalized_count} entries processed.`);
+            statusDiv.classList.add('hidden');
+            loadDatasetPreview();
+        }
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+        statusDiv.classList.add('hidden');
+    }
+}
+
+async function pollNormalizationStatus(jobId) {
+    const progressBar = document.getElementById('normalize-progress');
+    const message = document.getElementById('normalize-message');
+    const statusDiv = document.getElementById('normalize-status');
+    
+    const poll = async () => {
+        try {
+            const response = await api.get(`/api/jobs/${jobId}`);
+            if (!response.ok) return;
+            
+            const job = await response.json();
+            
+            progressBar.style.width = `${job.progress}%`;
+            message.textContent = job.message || 'Processing...';
+            
+            if (job.status === 'completed') {
+                ui.showAlert('Normalization completed!');
+                statusDiv.classList.add('hidden');
+                loadDatasetPreview();
+                return;
+            }
+            
+            if (job.status === 'failed') {
+                ui.showAlert(job.error_message || 'Normalization failed', 'error');
+                statusDiv.classList.add('hidden');
+                return;
+            }
+            
+            setTimeout(poll, 1000);
+        } catch (error) {
+            console.error('Poll error:', error);
+        }
+    };
+    
+    poll();
+}
+
+async function loadDatasetPreview() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) return;
+    
+    const tbody = document.getElementById('dataset-preview');
+    
+    try {
+        const response = await api.get(`/api/dataset/${projectId}?page=${currentPage}&per_page=${perPage}`);
+        if (!response.ok) throw new Error('Failed to load dataset');
+        
+        const data = await response.json();
+        totalEntries = data.total;
+        
+        document.getElementById('preview-count').textContent = totalEntries;
+        document.getElementById('current-page').textContent = currentPage;
+        
+        // Update pagination buttons
+        document.getElementById('prev-btn').disabled = currentPage <= 1;
+        document.getElementById('next-btn').disabled = currentPage * perPage >= totalEntries;
+        
+        if (data.entries.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="3" class="text-center text-muted">No entries yet. Generate CSV first.</td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = data.entries.map(entry => `
+            <tr>
+                <td><code>${entry.wav_filename}</code></td>
+                <td class="text-wrap">${escapeHtml(entry.original_text)}</td>
+                <td class="text-wrap">${escapeHtml(entry.normalized_text || '-')}</td>
+            </tr>
+        `).join('');
+    } catch (error) {
+        tbody.innerHTML = `<tr><td colspan="3" class="text-center text-error">${error.message}</td></tr>`;
+    }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function prevPage() {
+    if (currentPage > 1) {
+        currentPage--;
+        loadDatasetPreview();
+    }
+}
+
+function nextPage() {
+    if (currentPage * perPage < totalEntries) {
+        currentPage++;
+        loadDatasetPreview();
+    }
+}
+
+// Override project change to reload preview
+const originalSelectProject = window.selectProject;
+window.selectProject = async function(projectId) {
+    if (originalSelectProject) await originalSelectProject(projectId);
+    currentPage = 1;
+    loadDatasetPreview();
+};
+</script>
+{% endblock %}
+

@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-multipart
+sqlalchemy
+pydub
+pandas
+ujson
+jinja2
+python-dateutil

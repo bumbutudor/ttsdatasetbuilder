@@ -1,0 +1,556 @@
+{% extends "app_layout.html" %}
+{% set active_page = 'generate' %}
+
+{% block title %}Generate CSV - Dataset Builder{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📄 Generate CSV</h1>
+    <p>Extract text from documents and generate metadata.csv for your dataset.</p>
+</div>
+
+<!-- Method Selection -->
+<div class="card mb-xl">
+    <h3 class="mb-lg">Extraction Method</h3>
+    <div class="grid-2">
+        <label class="form-check card" style="cursor: pointer; padding: var(--space-lg);">
+            <input type="radio" name="extraction_method" value="spacy" checked onchange="updateMethodInfo()">
+            <div style="margin-left: var(--space-md);">
+                <strong>Spacy NLP</strong>
+                <p class="text-muted text-small mt-sm">Fast, rule-based extraction using Romanian NLP model. Best for clean text documents.</p>
+            </div>
+        </label>
+        <label class="form-check card" style="cursor: pointer; padding: var(--space-lg);">
+            <input type="radio" name="extraction_method" value="vision" onchange="updateMethodInfo()">
+            <div style="margin-left: var(--space-md);">
+                <strong>Vision LLM</strong>
+                <p class="text-muted text-small mt-sm">AI-powered extraction using Ollama/OpenAI. Best for complex PDFs with formulas.</p>
+            </div>
+        </label>
+    </div>
+</div>
+
+<!-- File Selection -->
+<div class="card mb-xl">
+    <div class="card-header">
+        <h3>Select Files to Process</h3>
+        <div class="flex gap-md">
+            <button class="btn btn-sm btn-secondary" onclick="selectAllFiles()">Select All</button>
+            <button class="btn btn-sm btn-secondary" onclick="deselectAllFiles()">Deselect All</button>
+        </div>
+    </div>
+    
+    <div class="file-list" id="files-to-process" style="max-height: 350px;">
+        <div class="file-empty">
+            <p>No files available</p>
+            <small class="text-muted">Upload documents first in the "Uploaded Files" section</small>
+        </div>
+    </div>
+    
+    <div class="mt-lg flex flex-between items-center">
+        <span class="text-muted"><span id="selected-count">0</span> files selected</span>
+        <button class="btn btn-primary btn-lg" onclick="startGeneration()" id="generate-btn" disabled>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="16 18 22 12 16 6"/>
+                <polyline points="8 6 2 12 8 18"/>
+            </svg>
+            Generate CSV
+        </button>
+    </div>
+</div>
+
+<!-- Processing Status -->
+<div id="processing-status" class="card hidden mb-xl">
+    <h3 class="mb-lg">Processing Status</h3>
+    <div class="progress">
+        <div class="progress-bar" id="processing-progress" style="width: 0%"></div>
+    </div>
+    <p class="text-muted mt-md" id="processing-message">Starting...</p>
+</div>
+
+<!-- Model Download Modal -->
+<div id="model-download-modal" class="modal">
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+            <h3>🔽 Model Not Found</h3>
+            <button class="modal-close" onclick="closeModelModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="model-download-message" class="mb-lg">
+                The model <strong id="missing-model-name"></strong> is not available locally.
+            </p>
+            <p class="text-muted mb-lg">Would you like to download it now? This may take a few minutes depending on the model size.</p>
+            
+            <div id="download-progress-container" class="hidden">
+                <div class="progress mb-md">
+                    <div class="progress-bar" id="download-progress-bar" style="width: 0%"></div>
+                </div>
+                <p class="text-muted text-center" id="download-status">Preparing download...</p>
+            </div>
+            
+            <div id="download-buttons" class="flex gap-md justify-center mt-lg">
+                <button class="btn btn-secondary" onclick="closeModelModal()">Cancel</button>
+                <button class="btn btn-primary" id="start-download-btn" onclick="startModelDownload()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    Download Model
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Method Info -->
+<div id="method-info" class="card">
+    <h4>About Spacy Extraction</h4>
+    <p class="text-muted mt-md">
+        Spacy uses the Romanian NLP model <code>ro_core_news_lg</code> to split text into sentences.
+        It applies filters based on your dataset type (TTS/STT) configuration.
+    </p>
+    <div class="mt-lg">
+        <h5>Current Settings:</h5>
+        <ul class="text-muted mt-sm" style="list-style: none;">
+            <li>• Min sentence length: <strong id="setting-min-len">30</strong> chars</li>
+            <li>• Max sentence length: <strong id="setting-max-len">100</strong> chars</li>
+            <li>• Min words: <strong id="setting-min-words">5</strong></li>
+        </ul>
+        <a href="/settings" class="btn btn-sm btn-outline mt-md">Change Settings</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let selectedFiles = new Set();
+let pendingModelName = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (!api.isAuthenticated()) {
+        window.location.href = withBase('/login');
+        return;
+    }
+    
+    loadProjectSelector();
+    loadSettings();
+});
+
+function closeModelModal() {
+    document.getElementById('model-download-modal').classList.remove('active');
+    pendingModelName = null;
+}
+
+function showModelDownloadDialog(modelName) {
+    pendingModelName = modelName;
+    document.getElementById('missing-model-name').textContent = modelName;
+    document.getElementById('download-progress-container').classList.add('hidden');
+    document.getElementById('download-buttons').classList.remove('hidden');
+    document.getElementById('start-download-btn').disabled = false;
+    document.getElementById('model-download-modal').classList.add('active');
+}
+
+async function startModelDownload() {
+    if (!pendingModelName) return;
+    
+    const progressContainer = document.getElementById('download-progress-container');
+    const progressBar = document.getElementById('download-progress-bar');
+    const statusText = document.getElementById('download-status');
+    const downloadBtn = document.getElementById('start-download-btn');
+    const buttonsContainer = document.getElementById('download-buttons');
+    
+    // Show progress, hide buttons
+    progressContainer.classList.remove('hidden');
+    downloadBtn.disabled = true;
+    downloadBtn.innerHTML = '<span class="spinner"></span> Downloading...';
+    
+    try {
+        const token = api.token;
+        const response = await fetch(withBase(`/api/settings/ollama/pull/${encodeURIComponent(pendingModelName)}`), {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to start download');
+        }
+        
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const text = decoder.decode(value);
+            const lines = text.split('\n');
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.substring(6));
+                        
+                        if (data.status === 'error') {
+                            throw new Error(data.message);
+                        }
+                        
+                        if (data.status === 'success') {
+                            progressBar.style.width = '100%';
+                            statusText.textContent = '✓ Model downloaded successfully!';
+                            ui.showAlert('Model downloaded successfully! You can now generate CSV.', 'success');
+                            
+                            setTimeout(() => {
+                                closeModelModal();
+                            }, 1500);
+                            return;
+                        }
+                        
+                        // Update progress
+                        progressBar.style.width = `${data.progress}%`;
+                        
+                        let statusMessage = data.status;
+                        if (data.total > 0) {
+                            const completedMB = (data.completed / (1024 * 1024)).toFixed(1);
+                            const totalMB = (data.total / (1024 * 1024)).toFixed(1);
+                            statusMessage = `${data.status} - ${completedMB} / ${totalMB} MB (${data.progress}%)`;
+                        }
+                        statusText.textContent = statusMessage;
+                        
+                    } catch (e) {
+                        if (e.message !== 'Unexpected end of JSON input') {
+                            console.error('Parse error:', e);
+                        }
+                    }
+                }
+            }
+        }
+        
+    } catch (error) {
+        console.error('Download error:', error);
+        statusText.textContent = `❌ Error: ${error.message}`;
+        progressBar.style.width = '0%';
+        progressBar.style.backgroundColor = 'var(--danger)';
+        
+        // Re-enable download button
+        downloadBtn.disabled = false;
+        downloadBtn.innerHTML = `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Retry Download
+        `;
+    }
+}
+
+async function checkOllamaModel(modelName) {
+    try {
+        const response = await api.post('/api/settings/ollama/check', { model: modelName });
+        if (!response.ok) {
+            throw new Error('Failed to check model');
+        }
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Model check error:', error);
+        return { exists: false, error: error.message };
+    }
+}
+
+function updateMethodInfo() {
+    const method = document.querySelector('input[name="extraction_method"]:checked').value;
+    const infoDiv = document.getElementById('method-info');
+    
+    if (method === 'spacy') {
+        infoDiv.innerHTML = `
+            <h4>About Spacy Extraction</h4>
+            <p class="text-muted mt-md">
+                Spacy uses the Romanian NLP model <code>ro_core_news_lg</code> to split text into sentences.
+                It applies filters based on your dataset type (TTS/STT) configuration.
+            </p>
+            <div class="mt-lg">
+                <h5>Current Settings:</h5>
+                <ul class="text-muted mt-sm" style="list-style: none;">
+                    <li>• Min sentence length: <strong id="setting-min-len">30</strong> chars</li>
+                    <li>• Max sentence length: <strong id="setting-max-len">100</strong> chars</li>
+                    <li>• Min words: <strong id="setting-min-words">5</strong></li>
+                </ul>
+                <a href="/settings" class="btn btn-sm btn-outline mt-md">Change Settings</a>
+            </div>
+        `;
+    } else {
+        infoDiv.innerHTML = `
+            <h4>About Vision LLM Extraction</h4>
+            <p class="text-muted mt-md">
+                Vision LLM converts PDF pages to images and uses AI to extract and normalize text simultaneously.
+                Best for complex documents with formulas, tables, or unusual formatting.
+            </p>
+            <div class="mt-lg">
+                <h5>Current Settings:</h5>
+                <ul class="text-muted mt-sm" style="list-style: none;">
+                    <li>• Provider: <strong id="setting-provider">Ollama</strong></li>
+                    <li>• Model: <strong id="setting-model">gemma3:4b</strong></li>
+                </ul>
+                <a href="/settings" class="btn btn-sm btn-outline mt-md">Change Settings</a>
+            </div>
+            <div class="alert alert-warning mt-lg" style="position: relative;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                </svg>
+                <span>Vision LLM only works with PDF files. TXT files will be skipped.</span>
+            </div>
+        `;
+    }
+    loadSettings();
+}
+
+async function loadSettings() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) return;
+    
+    try {
+        const response = await api.get(`/api/settings/${projectId}`);
+        if (!response.ok) return;
+        
+        const settings = await response.json();
+        
+        // Update displayed settings
+        const minLen = document.getElementById('setting-min-len');
+        const maxLen = document.getElementById('setting-max-len');
+        const minWords = document.getElementById('setting-min-words');
+        const provider = document.getElementById('setting-provider');
+        const model = document.getElementById('setting-model');
+        
+        if (minLen) minLen.textContent = settings.min_sentence_length || 30;
+        if (maxLen) maxLen.textContent = settings.max_sentence_length || 100;
+        if (minWords) minWords.textContent = settings.min_words || 5;
+
+        if (provider || model) {
+            const providerKey = String(settings.ai_provider || 'ollama').toLowerCase();
+
+            const providerLabel = providerKey === 'openai'
+                ? 'OpenAI'
+                : providerKey === 'gemini'
+                    ? 'Google Gemini'
+                    : 'Ollama';
+
+            const modelName = providerKey === 'openai'
+                ? (settings.openai_model || 'gpt-4o-mini')
+                : providerKey === 'gemini'
+                    ? (settings.gemini_model || 'gemini-2.0-flash')
+                    : (settings.ollama_model || 'gemma3:4b');
+
+            if (provider) provider.textContent = providerLabel;
+            if (model) model.textContent = modelName;
+        }
+    } catch (error) {
+        console.error('Error loading settings:', error);
+    }
+}
+
+async function loadFilesForProcessing() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) return;
+    
+    try {
+        const response = await api.get(`/api/files/${projectId}`);
+        if (!response.ok) throw new Error('Failed to load files');
+        
+        const data = await response.json();
+        renderFilesForSelection(data.documents);
+    } catch (error) {
+        console.error('Error loading files:', error);
+    }
+}
+
+function renderFilesForSelection(documents) {
+    const container = document.getElementById('files-to-process');
+    
+    if (documents.length === 0) {
+        container.innerHTML = `
+            <div class="file-empty">
+                <p>No documents available</p>
+                <small class="text-muted">Upload documents first in the "Uploaded Files" section</small>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = documents.map(file => `
+        <div class="file-item">
+            <div class="file-info">
+                <input type="checkbox" class="file-checkbox" value="${file.name}" onchange="toggleFileSelection('${file.name}')">
+                <div class="file-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                </div>
+                <div>
+                    <div class="file-name">${file.name}</div>
+                    <div class="file-size">${file.size_formatted} • ${file.type.toUpperCase()}</div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function toggleFileSelection(filename) {
+    if (selectedFiles.has(filename)) {
+        selectedFiles.delete(filename);
+    } else {
+        selectedFiles.add(filename);
+    }
+    updateSelectedCount();
+}
+
+function selectAllFiles() {
+    document.querySelectorAll('.file-checkbox').forEach(cb => {
+        cb.checked = true;
+        selectedFiles.add(cb.value);
+    });
+    updateSelectedCount();
+}
+
+function deselectAllFiles() {
+    document.querySelectorAll('.file-checkbox').forEach(cb => {
+        cb.checked = false;
+    });
+    selectedFiles.clear();
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    document.getElementById('selected-count').textContent = selectedFiles.size;
+    document.getElementById('generate-btn').disabled = selectedFiles.size === 0;
+}
+
+async function startGeneration() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) {
+        ui.showAlert('Please select a project first', 'warning');
+        return;
+    }
+    
+    if (selectedFiles.size === 0) {
+        ui.showAlert('Please select at least one file', 'warning');
+        return;
+    }
+    
+    const method = document.querySelector('input[name="extraction_method"]:checked').value;
+    const files = Array.from(selectedFiles);
+    
+    // Check if Vision LLM and Ollama provider - verify model exists
+    if (method === 'vision') {
+        try {
+            // Get current settings
+            const settingsResponse = await api.get(`/api/settings/${projectId}`);
+            if (settingsResponse.ok) {
+                const settings = await settingsResponse.json();
+                
+                if (settings.ai_provider === 'ollama') {
+                    const modelName = settings.ollama_model || 'gemma3:4b';
+                    
+                    ui.showAlert('Checking if Ollama model is available...', 'info');
+                    
+                    const modelCheck = await checkOllamaModel(modelName);
+                    
+                    if (!modelCheck.exists) {
+                        if (modelCheck.error && modelCheck.error.includes('Could not connect')) {
+                            ui.showAlert('Could not connect to Ollama. Make sure Ollama is running.', 'error');
+                            return;
+                        }
+                        
+                        // Model not found - show download dialog
+                        showModelDownloadDialog(modelName);
+                        return;
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Settings check error:', error);
+            // Continue anyway if settings check fails
+        }
+    }
+    
+    proceedWithGeneration(method, files);
+}
+
+async function proceedWithGeneration(method, files) {
+    const projectId = getCurrentProjectId();
+    const statusDiv = document.getElementById('processing-status');
+    statusDiv.classList.remove('hidden');
+    
+    try {
+        const response = await api.post(`/api/generate/${projectId}`, {
+            method: method,
+            files: files
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Generation failed');
+        }
+        
+        const result = await response.json();
+        ui.showAlert('Generation started!');
+        
+        // Poll for job status
+        if (result.job_id) {
+            pollGenerationStatus(result.job_id);
+        }
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+        statusDiv.classList.add('hidden');
+    }
+}
+
+async function pollGenerationStatus(jobId) {
+    const progressBar = document.getElementById('processing-progress');
+    const message = document.getElementById('processing-message');
+    const statusDiv = document.getElementById('processing-status');
+    
+    const poll = async () => {
+        try {
+            const response = await api.get(`/api/jobs/${jobId}`);
+            if (!response.ok) return;
+            
+            const job = await response.json();
+            
+            progressBar.style.width = `${job.progress}%`;
+            message.textContent = job.message || 'Processing...';
+            
+            if (job.status === 'completed') {
+                ui.showAlert('CSV generation completed!');
+                statusDiv.classList.add('hidden');
+                return;
+            }
+            
+            if (job.status === 'failed') {
+                ui.showAlert(job.error_message || 'Generation failed', 'error');
+                statusDiv.classList.add('hidden');
+                return;
+            }
+            
+            setTimeout(poll, 2000);
+        } catch (error) {
+            console.error('Poll error:', error);
+        }
+    };
+    
+    poll();
+}
+
+// Override project change to reload files
+const originalSelectProject = window.selectProject;
+window.selectProject = async function(projectId) {
+    if (originalSelectProject) await originalSelectProject(projectId);
+    loadFilesForProcessing();
+    loadSettings();
+};
+</script>
+{% endblock %}
+

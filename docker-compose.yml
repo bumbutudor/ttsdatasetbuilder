@@ -1,0 +1,94 @@
+services:
+  # --- 1. Reverse Proxy (Nginx) ---
+  # Acesta este "ușa principală". Toate cererile trec pe aici (Port 80).
+  reverse-proxy:
+    image: nginx:1.27-alpine
+    container_name: tts-suite-proxy
+    ports:
+      - "127.0.0.1:8000:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app1
+      - app2
+    restart: unless-stopped
+    networks:
+      - suite
+
+  # --- 2. App 1: TTS Dataset Builder ---
+  app1:
+    build:
+      context: ./webapp
+      dockerfile: Dockerfile
+    container_name: tts-builder-app
+    # NU expunem portul 8000 la host pentru a forța folosirea Nginx (port 80)
+    expose:
+      - "8000"
+    volumes:
+      - ./webapp/data:/app/data
+      - huggingface_cache:/root/.cache/huggingface
+    environment:
+      - ROOT_PATH=/datasetBuilder
+      - DATABASE_URL=sqlite:///./data/app.db
+      - SECRET_KEY=${SECRET_KEY:-schimba_cheia_in_productie_teslagpu}
+      - AI_PROVIDER=ollama
+      - WHISPER_MODEL_NAME=TransferRapid/whisper-large-v3-turbo_ro
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL_NAME=gemma3:4b
+    restart: unless-stopped
+    networks:
+      - suite
+    depends_on:
+      - ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # --- 3. App 2: Voice Recorder ---
+  app2:
+    build:
+      context: ./voiceRecordingWebApp
+      dockerfile: Dockerfile
+    container_name: stt-recorder-app
+    # NU expunem portul 8000 la host
+    expose:
+      - "8000"
+    volumes:
+      - ./voiceRecordingWebApp/dataset:/data
+    environment:
+      - ROOT_PATH=/voiceRecording
+    restart: unless-stopped
+    networks:
+      - suite
+
+  # --- 4. Ollama (AI) ---
+  ollama:
+    image: ollama/ollama:latest
+    container_name: tts-ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - suite
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  huggingface_cache:
+  ollama_data:
+
+networks:
+  suite:
+    name: tts-suite-network
+    driver: bridge

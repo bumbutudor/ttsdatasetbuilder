@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}TTS/STT Dataset Builder{% endblock %}</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <!-- Styles - use full path with prefix for nginx routing -->
+    <link rel="stylesheet" href="/static/css/style.css?v=3">
+
+    <script>
+        // Base path when running behind the unified reverse proxy
+        window.__APP_BASE_PATH__ = "";
+        
+        // Define withBase early so inline scripts can use it
+        window.withBase = function(path) {
+            const base = window.__APP_BASE_PATH__;
+            if (!base || !path) return path;
+            if (typeof path === 'string' && (path.startsWith('http://') || path.startsWith('https://'))) {
+                return path;
+            }
+            if (typeof path === 'string' && path.startsWith(base + '/')) {
+                return path;
+            }
+            if (typeof path === 'string' && path.startsWith('/')) {
+                return base + path;
+            }
+            return base + '/' + path;
+        };
+    </script>
+    
+    {% block head %}{% endblock %}
+</head>
+<body>
+    {% block body %}{% endblock %}
+    
+    <!-- Scripts -->
+    <script src="/static/js/app.js?v=3"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

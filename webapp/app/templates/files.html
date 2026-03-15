@@ -1,0 +1,325 @@
+{% extends "app_layout.html" %}
+{% set active_page = 'files' %}
+
+{% block title %}Uploaded Files - Dataset Builder{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📁 Uploaded Files</h1>
+    <p>Manage your uploaded documents and video files. Files are stored until you delete them.</p>
+</div>
+
+<!-- Upload Section -->
+<div class="grid-2 mb-xl">
+    <!-- Document Upload -->
+    <div class="card">
+        <h3 class="mb-lg">Upload Documents</h3>
+        <div class="upload-zone" id="doc-upload-zone">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="12" y1="18" x2="12" y2="12"/>
+                <line x1="9" y1="15" x2="15" y2="15"/>
+            </svg>
+            <h3>Drop PDF/TXT files here</h3>
+            <p>or click to browse</p>
+        </div>
+        <input type="file" id="doc-input" accept=".pdf,.txt" multiple hidden>
+    </div>
+    
+    <!-- Video/Audio Upload & Web Import -->
+    <div class="card">
+        <h3 class="mb-lg">Upload Videos / Audios</h3>
+        
+        <!-- Tabs / Sections -->
+        <div style="margin-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 1rem;">
+            <div class="upload-zone" id="video-upload-zone">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 18V5l12 7-12 6Z"/> <!-- Play icon combined -->
+                </svg>
+                <h3>Drop Video or Audio files</h3>
+                <p>MP4, MKV, MP3, WAV, FLAC, etc.</p>
+            </div>
+            <!-- Acceptăm și extensii audio -->
+            <input type="file" id="video-input" accept=".mp4,.mkv,.avi,.mov,.webm,.mp3,.wav,.flac,.ogg,.m4a" multiple hidden>
+        </div>
+
+        <!-- Web Import Section -->
+        <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px;">
+            <h4 class="mb-sm" style="font-size: 0.9rem;">Or Import from Web Link</h4>
+            <div class="flex gap-sm">
+                <input type="text" id="web-url-input" class="form-control" placeholder="Paste YouTube / Web Link here...">
+                <button class="btn btn-secondary" onclick="importFromUrl()" id="btn-import-url">
+                    Import
+                </button>
+            </div>
+            <p class="text-muted text-small mt-sm">Supports YouTube, Vimeo, etc.</p>
+        </div>
+    </div>
+</div>
+
+<!-- File Explorer -->
+<div class="file-explorer">
+    <!-- Documents Panel -->
+    <div class="file-panel">
+        <div class="file-panel-header">
+            <div class="file-panel-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                </svg>
+                <span>Documents</span>
+            </div>
+            <span class="badge badge-tts" id="doc-count">0 files</span>
+        </div>
+        <div class="file-list" id="documents-list">
+            <div class="file-empty">
+                <p>No documents uploaded yet</p>
+                <small class="text-muted">Upload PDF or TXT files to get started</small>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Videos Panel -->
+    <div class="file-panel">
+        <div class="file-panel-header">
+            <div class="file-panel-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="23 7 16 12 23 17 23 7"/>
+                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                </svg>
+                <span>Videos / Audios</span>
+            </div>
+            <span class="badge badge-stt" id="video-count">0 files</span>
+        </div>
+        <div class="file-list" id="videos-list">
+            <div class="file-empty">
+                <p>No videos uploaded yet</p>
+                <small class="text-muted">Upload video files to extract audio</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Job Status -->
+<div id="upload-status" class="card mt-xl hidden">
+    <h4>Upload Progress</h4>
+    <div class="progress mt-md">
+        <div class="progress-bar" id="upload-progress" style="width: 0%"></div>
+    </div>
+    <p class="text-muted mt-sm" id="upload-message">Uploading...</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function importFromUrl() {
+    const projectId = getCurrentProjectId();
+    const urlInput = document.getElementById('web-url-input');
+    const btn = document.getElementById('btn-import-url');
+    const url = urlInput.value.trim();
+    
+    if (!projectId) {
+        ui.showAlert('Please select a project first', 'warning');
+        return;
+    }
+    
+    if (!url) {
+        ui.showAlert('Please enter a URL', 'warning');
+        return;
+    }
+    
+    // UI Loading state
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Importing...';
+    
+    try {
+        const response = await api.post(`/api/files/import-url/${projectId}`, { url: url });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Import failed');
+        }
+        
+        const result = await response.json();
+        ui.showAlert(`Imported: ${result.title}`, 'success');
+        urlInput.value = ''; // Clear input
+        loadUploadedFiles(); // Refresh list
+        
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (!api.isAuthenticated()) {
+        window.location.href = withBase('/login');
+        return;
+    }
+    
+    loadProjectSelector();
+    
+    // Setup upload zones
+    setupUploadZone('doc-upload-zone', 'doc-input', uploadDocumentsOnly);
+    setupUploadZone('video-upload-zone', 'video-input', uploadVideosOnly);
+});
+
+async function uploadDocumentsOnly(files) {
+    const projectId = getCurrentProjectId();
+    if (!projectId) {
+        ui.showAlert('Please select a project first', 'warning');
+        return;
+    }
+    
+    try {
+        const response = await api.uploadFiles(`/api/files/documents/${projectId}`, files);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Upload failed');
+        }
+        
+        const result = await response.json();
+        ui.showAlert(`${result.files_uploaded} documents uploaded successfully`);
+        loadUploadedFiles();
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+    }
+}
+
+async function uploadVideosOnly(files) {
+    const projectId = getCurrentProjectId();
+    if (!projectId) {
+        ui.showAlert('Please select a project first', 'warning');
+        return;
+    }
+    
+    try {
+        const response = await api.uploadFiles(`/api/files/videos/${projectId}`, files);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Upload failed');
+        }
+        
+        const result = await response.json();
+        ui.showAlert(`${result.files_uploaded} videos uploaded successfully`);
+        loadUploadedFiles();
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+    }
+}
+
+async function loadUploadedFiles() {
+    const projectId = getCurrentProjectId();
+    if (!projectId) return;
+    
+    try {
+        const response = await api.get(`/api/files/${projectId}`);
+        if (!response.ok) throw new Error('Failed to load files');
+        
+        const data = await response.json();
+        renderFiles(data);
+    } catch (error) {
+        console.error('Error loading files:', error);
+    }
+}
+
+function renderFiles(data) {
+    const docsList = document.getElementById('documents-list');
+    const videosList = document.getElementById('videos-list');
+    const docCount = document.getElementById('doc-count');
+    const videoCount = document.getElementById('video-count');
+    
+    // Update counts
+    docCount.textContent = `${data.documents.length} files`;
+    videoCount.textContent = `${data.videos.length} files`;
+    
+    // Render documents
+    if (data.documents.length === 0) {
+        docsList.innerHTML = `
+            <div class="file-empty">
+                <p>No documents uploaded yet</p>
+                <small class="text-muted">Upload PDF or TXT files</small>
+            </div>
+        `;
+    } else {
+        docsList.innerHTML = data.documents.map(file => `
+            <div class="file-item">
+                <div class="file-info">
+                    <div class="file-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <div class="file-name">${file.name}</div>
+                        <div class="file-size">${file.size_formatted} • ${file.type.toUpperCase()}</div>
+                    </div>
+                </div>
+                <div class="file-actions">
+                    <button class="btn btn-sm btn-secondary" onclick="viewFile('${file.name}')">View</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteFile('${file.name}')">Delete</button>
+                </div>
+            </div>
+        `).join('');
+    }
+    
+    // Render videos
+    if (data.videos.length === 0) {
+        videosList.innerHTML = `
+            <div class="file-empty">
+                <p>No videos uploaded yet</p>
+                <small class="text-muted">Upload video files to extract audio</small>
+            </div>
+        `;
+    } else {
+        videosList.innerHTML = data.videos.map(file => `
+            <div class="file-item">
+                <div class="file-info">
+                    <div class="file-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="23 7 16 12 23 17 23 7"/>
+                            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <div class="file-name">${file.name}</div>
+                        <div class="file-size">${file.size_formatted} • ${file.type.toUpperCase()}</div>
+                    </div>
+                </div>
+                <div class="file-actions">
+                    <button class="btn btn-sm btn-secondary" onclick="viewFile('${file.name}')">View</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteFile('${file.name}')">Delete</button>
+                </div>
+            </div>
+        `).join('');
+    }
+}
+
+async function viewFile(filename) {
+    const projectId = getCurrentProjectId();
+    const token = api.token;
+    window.open(`/api/files/${projectId}/download/${filename}?token=${encodeURIComponent(token)}`, '_blank');
+}
+
+async function deleteFile(filename) {
+    if (!confirm(`Delete "${filename}"?`)) return;
+    
+    const projectId = getCurrentProjectId();
+    try {
+        const response = await api.delete(`/api/files/${projectId}/${filename}`);
+        if (!response.ok) throw new Error('Failed to delete file');
+        
+        ui.showAlert('File deleted');
+        loadUploadedFiles();
+    } catch (error) {
+        ui.showAlert(error.message, 'error');
+    }
+}
+</script>
+{% endblock %}
+

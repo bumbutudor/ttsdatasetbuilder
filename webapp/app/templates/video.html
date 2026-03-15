@@ -1,0 +1,468 @@
+{% extends "app_layout.html" %}
+{% set active_page = 'video' %}
+
+{% block title %}Video to Dataset - Dataset Builder{% endblock %}
+
+{% block content %}
+<style>
+    /* Stiluri specifice pentru tabelul de transcriere */
+    #transcripts-tbody td {
+        vertical-align: top; /* Aliniem elementele sus */
+        padding: 15px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    /* Stilul pentru textarea */
+    .transcript-editor {
+        width: 100%;
+        min-height: 90px;      /* Înălțime minimă mai mare */
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        padding: 12px;
+        color: #f1f5f9;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.95rem;
+        line-height: 1.6;
+        resize: vertical;      /* Permite utilizatorului să tragă de colț */
+        overflow: hidden;      /* Ascunde bara de scroll (folosim auto-grow) */
+        transition: border-color 0.2s, background 0.2s;
+    }
+
+    .transcript-editor:focus {
+        outline: none;
+        border-color: var(--color-accent);
+        background: rgba(0, 0, 0, 0.3);
+        box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.1);
+    }
+
+    /* Ajustare pentru coloana de acțiuni */
+    .action-col {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100%;
+        padding-top: 10px;
+    }
+</style>
+<div class="page-header">
+    <h1>🎬 Video to Dataset (Workflow)</h1>
+    <p>Split video audio, review segments, transcribe, and add to dataset.</p>
+</div>
+
+<!-- Step 1: Settings & Files -->
+<div id="step-1" class="workflow-step">
+    <div class="card mb-xl">
+        <h3 class="mb-lg">1. Configuration</h3>
+        
+        <div class="form-group">
+            <label class="form-label">Whisper Model Name</label>
+            <div class="flex gap-sm">
+                <input type="text" id="whisper-model" class="form-control" 
+                       value="gigant/whisper-medium-romanian" 
+                       list="model-suggestions" placeholder="Type model name...">
+                <datalist id="model-suggestions">
+                    <option value="gigant/whisper-medium-romanian">
+                    <option value="iRaduS/whisper-romanian-finetune">
+                    <option value="TransferRapid/whisper-large-v3-turbo_ro">
+                    <option value="openai/whisper-large-v3">
+                </datalist>
+            </div>
+            <small class="text-muted">Type the HuggingFace model ID (e.g., <code>openai/whisper-base</code>).</small>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Segmentation</label>
+            <div class="text-muted">Automatically based on the current project type: TTS = 3–10s, STT = 3–30s (Silero VAD).</div>
+        </div>
+    </div>
+
+    <!-- Video Selection -->
+    <div class="card mb-xl">
+        <div class="card-header">
+            <h3>Select Videos</h3>
+            <div class="flex gap-md">
+                <button class="btn btn-sm btn-secondary" onclick="selectAllVideos()">Select All</button>
+            </div>
+        </div>
+        <div class="file-list" id="videos-to-process" style="max-height: 200px;">
+            <!-- Populated via JS -->
+        </div>
+        <div class="mt-lg">
+            <button class="btn btn-primary btn-lg w-full" onclick="initiateSplit()">
+                Start Split Process
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Job Progress Overlay (Global for this page) -->
+<div id="job-overlay" class="card hidden mb-xl" style="background: var(--color-bg-tertiary); border: 1px solid var(--color-accent);">
+    <h3 id="job-title">Processing...</h3>
+    <div class="progress mt-md mb-md">
+        <div class="progress-bar" id="job-progress" style="width: 0%"></div>
+    </div>
+    <div class="flex flex-between">
+        <span id="job-message" class="text-muted">Initializing...</span>
+        <div class="flex gap-sm">
+             <button class="btn btn-sm btn-secondary" onclick="pauseJob()" id="btn-pause">Pause</button>
+             <button class="btn btn-sm btn-danger" onclick="cancelJob()" id="btn-cancel">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- Step 2: Review Segments -->
+<div id="step-2" class="workflow-step hidden">
+    <div class="card mb-xl">
+        <div class="flex flex-between items-center mb-lg">
+            <h3>2. Review Audio Segments</h3>
+            <span class="badge badge-info" id="segment-count">0 segments</span>
+        </div>
+        <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Play</th>
+                        <th>File</th>
+                        <th>Duration</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="segments-tbody"></tbody>
+            </table>
+        </div>
+        <div class="mt-lg flex gap-md justify-center">
+            <button class="btn btn-secondary" onclick="resetWorkflow()">Cancel / Restart</button>
+            <button class="btn btn-primary" onclick="initiateTranscription()">
+                Confirm & Transcribe
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Step 3: Review Transcription -->
+<div id="step-3" class="workflow-step hidden">
+    <div class="card mb-xl">
+        <div class="flex flex-between items-center mb-lg">
+            <h3>3. Review Transcription</h3>
+            <span class="badge badge-success">Transcription Done</span>
+        </div>
+        <div class="table-container" style="max-height: 500px; overflow-y: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th width="50">Play</th>
+                        <th>Transcript (Editable)</th>
+                        <th width="80">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="transcripts-tbody"></tbody>
+            </table>
+        </div>
+        <div class="mt-lg flex gap-md justify-center">
+            <button class="btn btn-secondary" onclick="resetWorkflow()">Discard All</button>
+            <button class="btn btn-success" onclick="commitDataset()">
+                Add to Main Dataset
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Model Download Modal -->
+<div id="model-modal" class="modal">
+    <div class="modal-content">
+        <h3>Model Not Found</h3>
+        <p class="mb-lg">The model <code id="modal-model-name"></code> was not found locally.</p>
+        <p>Do you want to download it now? (This happens on the server).</p>
+        
+        <div id="dl-progress-area" class="hidden mt-lg">
+            <div class="progress">
+                <div class="progress-bar" id="dl-progress-bar" style="width: 0%"></div>
+            </div>
+            <p id="dl-status" class="text-small text-center mt-sm">Starting...</p>
+        </div>
+
+        <div class="flex gap-md justify-center mt-xl" id="dl-buttons">
+            <button class="btn btn-secondary" onclick="ui.hideModal('model-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="confirmDownload()">Download Model</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentJobId = null;
+let currentStagingId = null;
+let selectedVideos = new Set();
+let segmentsData = [];
+let transcriptsData = [];
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadProjectSelector();
+    loadVideosForProcessing();
+});
+
+// --- File Selection Logic ---
+async function loadVideosForProcessing() {
+    const projectId = getCurrentProjectId();
+    if(!projectId) return;
+    const res = await api.get(`/api/files/${projectId}`);
+    const data = await res.json();
+    const container = document.getElementById('videos-to-process');
+    container.innerHTML = data.videos.map(f => `
+        <div class="file-item">
+            <div class="file-info">
+                <input type="checkbox" class="file-checkbox" value="${f.name}" onchange="toggleVideo('${f.name}')">
+                <span class="ml-sm">${f.name}</span>
+            </div>
+        </div>
+    `).join('');
+}
+function toggleVideo(name) {
+    if(selectedVideos.has(name)) selectedVideos.delete(name);
+    else selectedVideos.add(name);
+}
+function selectAllVideos() {
+    document.querySelectorAll('.file-checkbox').forEach(c => { c.checked = true; selectedVideos.add(c.value); });
+}
+
+// --- Step 1: Split ---
+async function initiateSplit() {
+    if(selectedVideos.size === 0) return ui.showAlert("Select videos first", "warning");
+    
+    // 1. Check Model
+    const modelName = document.getElementById('whisper-model').value.trim();
+    if(!modelName) return ui.showAlert("Enter model name", "error");
+    
+    const checkRes = await api.post('/api/video/check-model', { model_name: modelName });
+    if(!checkRes.ok) return;
+    const checkData = await checkRes.json();
+    
+    if(!checkData.exists) {
+        document.getElementById('modal-model-name').textContent = modelName;
+        ui.showModal('model-modal');
+        return;
+    }
+    
+    startSplitJob();
+}
+
+async function confirmDownload() {
+    const modelName = document.getElementById('whisper-model').value.trim();
+    document.getElementById('dl-buttons').classList.add('hidden');
+    document.getElementById('dl-progress-area').classList.remove('hidden');
+    
+    try {
+        const res = await api.post('/api/video/download-model', { model_name: modelName });
+        const data = await res.json();
+        monitorJob(data.job_id, document.getElementById('dl-progress-bar'), document.getElementById('dl-status'), () => {
+            ui.hideModal('model-modal');
+            ui.showAlert("Model downloaded!");
+            startSplitJob(); // Continue to split
+        });
+    } catch(e) {
+        ui.showAlert("Download failed: " + e.message, "error");
+    }
+}
+
+async function startSplitJob() {
+    const projectId = getCurrentProjectId();
+    const body = {
+        files: Array.from(selectedVideos)
+    };
+    
+    // Show Overlay
+    document.getElementById('step-1').classList.add('hidden');
+    document.getElementById('job-overlay').classList.remove('hidden');
+    document.getElementById('job-title').textContent = "Splitting Audio (Silero VAD)...";
+    
+    const res = await api.post(`/api/video/${projectId}/split`, body);
+    const data = await res.json();
+    currentJobId = data.job_id;
+    currentStagingId = data.staging_id;
+    
+    monitorJob(currentJobId, document.getElementById('job-progress'), document.getElementById('job-message'), async () => {
+        // Job Done -> Load Segments
+        loadSegmentsReview();
+    });
+}
+
+// --- Step 2: Review Segments ---
+async function loadSegmentsReview() {
+    document.getElementById('job-overlay').classList.add('hidden');
+    document.getElementById('step-2').classList.remove('hidden');
+    
+    const projectId = getCurrentProjectId();
+    const res = await api.get(`/api/video/${projectId}/staging/${currentStagingId}/segments`);
+    const data = await res.json();
+    segmentsData = data.segments;
+    renderSegments();
+}
+
+function renderSegments() {
+    const tbody = document.getElementById('segments-tbody');
+    document.getElementById('segment-count').textContent = segmentsData.length + " segments";
+    
+    tbody.innerHTML = segmentsData.map(s => `
+        <tr>
+            <td>
+                <audio controls src="${withBase(`/api/video/${getCurrentProjectId()}/staging/${currentStagingId}/audio/${s.filename}`)}"></audio>
+            </td>
+            <td>${s.filename}</td>
+            <td>${s.duration}s</td>
+            <td><button class="btn btn-sm btn-danger" onclick="deleteSegment('${s.filename}')">Delete</button></td>
+        </tr>
+    `).join('');
+}
+
+async function deleteSegment(filename) {
+    const projectId = getCurrentProjectId();
+    await api.delete(`/api/video/${projectId}/staging/${currentStagingId}/segment/${filename}`);
+    segmentsData = segmentsData.filter(s => s.filename !== filename);
+    renderSegments();
+}
+
+// --- Step 3: Transcribe ---
+async function initiateTranscription() {
+    document.getElementById('step-2').classList.add('hidden');
+    document.getElementById('job-overlay').classList.remove('hidden');
+    document.getElementById('job-title').textContent = "Transcribing...";
+    
+    const projectId = getCurrentProjectId();
+    const body = {
+        staging_id: currentStagingId,
+        files: segmentsData.map(s => s.filename),
+        whisper_model: document.getElementById('whisper-model').value
+    };
+    
+    const res = await api.post(`/api/video/${projectId}/transcribe`, body);
+    const data = await res.json();
+    currentJobId = data.job_id;
+    
+    monitorJob(currentJobId, document.getElementById('job-progress'), document.getElementById('job-message'), async () => {
+        loadTranscriptReview();
+    });
+}
+
+// --- Step 4: Review Transcripts ---
+async function loadTranscriptReview() {
+    document.getElementById('job-overlay').classList.add('hidden');
+    document.getElementById('step-3').classList.remove('hidden');
+    
+    const projectId = getCurrentProjectId();
+    const res = await api.get(`/api/video/${projectId}/staging/${currentStagingId}/transcriptions`);
+    const data = await res.json();
+    transcriptsData = data.results;
+    renderTranscripts();
+}
+function renderTranscripts() {
+    const tbody = document.getElementById('transcripts-tbody');
+    
+    if (transcriptsData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted p-lg">No transcriptions available.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = transcriptsData.map((t, idx) => `
+        <tr id="row-${idx}" class="fade-in">
+            <td width="200">
+                <!-- Audio Player mai compact -->
+                <audio src="${withBase(`/api/video/${getCurrentProjectId()}/staging/${currentStagingId}/audio/${t.filename}`)}" 
+                       controls 
+                       style="width: 100%; height: 40px; margin-top: 5px;"></audio>
+                <div class="text-muted text-small mt-sm text-center">${t.filename}</div>
+            </td>
+            <td>
+                <textarea class="form-control transcript-editor" 
+                          id="tx-${idx}"
+                          oninput="autoResize(this); transcriptsData[${idx}].text = this.value"
+                >${t.text}</textarea>
+            </td>
+            <td width="100">
+                <div class="action-col">
+                    <button class="btn btn-sm btn-danger" onclick="removeTranscript(${idx})" title="Remove segment">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 6h18"></path>
+                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+
+    // Ajustează automat înălțimea pentru toate textarea-urile după randare
+    setTimeout(() => {
+        document.querySelectorAll('.transcript-editor').forEach(el => autoResize(el));
+    }, 100);
+}
+
+// Funcție helper pentru auto-redimensionare
+function autoResize(element) {
+    element.style.height = 'auto'; // Resetăm înălțimea pentru a calcula corect
+    element.style.height = (element.scrollHeight + 2) + 'px'; // Setăm înălțimea la conținut
+}
+
+function removeTranscript(idx) {
+    transcriptsData.splice(idx, 1);
+    renderTranscripts();
+}
+
+// --- Step 5: Commit ---
+async function commitDataset() {
+    const projectId = getCurrentProjectId();
+    const body = {
+        staging_id: currentStagingId,
+        entries: transcriptsData
+    };
+    
+    const res = await api.post(`/api/video/${projectId}/commit`, body);
+    if(res.ok) {
+        ui.showAlert("Dataset updated successfully!", "success");
+        setTimeout(() => window.location.href = withBase('/dataset'), 1000);
+    }
+}
+
+// --- Helpers ---
+async function cancelJob() {
+    if(currentJobId) {
+        await api.post(`/api/video/${getCurrentProjectId()}/cancel/${currentJobId}`, {});
+        resetWorkflow();
+    }
+}
+
+function pauseJob() {
+    alert("Pause implemented by backend status check - not fully wired in UI yet but Cancel works.");
+}
+
+function resetWorkflow() {
+    location.reload(); 
+}
+
+function monitorJob(jobId, progBar, msgElem, onComplete) {
+    const interval = setInterval(async () => {
+        try {
+            const res = await api.get(`/api/jobs/${jobId}`);
+            const job = await res.json();
+            
+            progBar.style.width = job.progress + "%";
+            msgElem.textContent = job.message;
+            
+            if(job.status === 'completed') {
+                clearInterval(interval);
+                onComplete();
+            }
+            if(job.status === 'failed') {
+                clearInterval(interval);
+                ui.showAlert("Job failed: " + job.error_message, "error");
+                document.getElementById('job-overlay').classList.add('hidden');
+                document.getElementById('step-1').classList.remove('hidden');
+            }
+        } catch(e) { console.error(e); }
+    }, 1000);
+}
+</script>
+{% endblock %}

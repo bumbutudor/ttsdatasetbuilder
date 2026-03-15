@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: stt_app
+    ports:
+      - "8000:8000"
+    volumes:
+      # Montăm folderul curent (unde e metadata.csv) în /data în container
+      - ./dataset:/data
+    restart: unless-stopped

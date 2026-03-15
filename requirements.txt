@@ -1,0 +1,16 @@
+rich
+spacy
+pyaudio
+keyboard
+librosa
+soundfile
+numpy
+num2words
+pymupdf
+ollama
+openai
+Pillow
+transformers
+torch
+torchaudio
+accelerate

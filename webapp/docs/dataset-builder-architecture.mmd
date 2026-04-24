@@ -1,0 +1,13 @@
+flowchart LR
+    UI["Interfata Web"] --> API["API FastAPI"]
+    API --> PROC["Servicii de procesare"]
+
+    subgraph PROC["Servicii de procesare"]
+        DOC["Procesare documente"]
+        VID["Procesare video/audio"]
+        NORM["Normalizare text"]
+        CLEAN["Curatare dataset"]
+    end
+
+    PROC --> DB["Baza de date SQLite"]
+    PROC --> FILES["Stocare fisiere"]

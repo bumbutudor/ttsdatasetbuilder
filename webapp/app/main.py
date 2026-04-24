@@ -1,4 +1,5 @@
 """Main FastAPI application."""
+import asyncio
 import logging
 import os
 
@@ -11,8 +12,10 @@ from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
+from app.config import WHISPER_MODEL_NAME, WHISPER_PRELOAD_ON_STARTUP
 from app.database import init_db
 from app.routes import auth, projects, files, generate, normalize, recorder, video, cleanse, dataset, settings, jobs
+from app.services.video_processor import preload_whisper_model
 
 # Read ROOT_PATH from environment (set by docker-compose for reverse proxy support)
 root_path = os.getenv("ROOT_PATH", "")
@@ -76,6 +79,9 @@ app.include_router(jobs.router)
 async def startup_event():
     """Initialize database on startup."""
     init_db()
+    if WHISPER_PRELOAD_ON_STARTUP:
+        logger.info("WHISPER_PRELOAD_ON_STARTUP enabled. Loading configured model during startup.")
+        await asyncio.to_thread(preload_whisper_model)
 
 
 # ============== Frontend Routes ==============
@@ -131,7 +137,16 @@ async def recorder_page(request: Request):
 @app.get("/video", response_class=HTMLResponse)
 async def video_page(request: Request):
     """Video to dataset page."""
-    return render_template("video.html", request)
+    configured_path = Path(WHISPER_MODEL_NAME)
+    whisper_model_label = configured_path.name if configured_path.is_absolute() else WHISPER_MODEL_NAME
+    whisper_model_location = "local server directory" if configured_path.exists() else "Hugging Face repository"
+    return render_template(
+        "video.html",
+        request,
+        configured_whisper_model=WHISPER_MODEL_NAME,
+        configured_whisper_model_label=whisper_model_label,
+        configured_whisper_model_location=whisper_model_location,
+    )
 
 
 @app.get("/cleanse", response_class=HTMLResponse)

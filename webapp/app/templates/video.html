@@ -56,19 +56,14 @@
         <h3 class="mb-lg">1. Configuration</h3>
         
         <div class="form-group">
-            <label class="form-label">Whisper Model Name</label>
-            <div class="flex gap-sm">
-                <input type="text" id="whisper-model" class="form-control" 
-                       value="gigant/whisper-medium-romanian" 
-                       list="model-suggestions" placeholder="Type model name...">
-                <datalist id="model-suggestions">
-                    <option value="gigant/whisper-medium-romanian">
-                    <option value="iRaduS/whisper-romanian-finetune">
-                    <option value="TransferRapid/whisper-large-v3-turbo_ro">
-                    <option value="openai/whisper-large-v3">
-                </datalist>
+            <label class="form-label">Configured Whisper Model</label>
+            <div class="form-control" style="display: flex; align-items: center; min-height: 48px;">
+                <code>{{ configured_whisper_model_label }}</code>
             </div>
-            <small class="text-muted">Type the HuggingFace model ID (e.g., <code>openai/whisper-base</code>).</small>
+            <small class="text-muted">
+                This workflow always uses the server-configured Whisper model from {{ configured_whisper_model_location }}.
+                Active value: <code>{{ configured_whisper_model }}</code>
+            </small>
         </div>
 
         <div class="form-group">
@@ -168,27 +163,6 @@
     </div>
 </div>
 
-<!-- Model Download Modal -->
-<div id="model-modal" class="modal">
-    <div class="modal-content">
-        <h3>Model Not Found</h3>
-        <p class="mb-lg">The model <code id="modal-model-name"></code> was not found locally.</p>
-        <p>Do you want to download it now? (This happens on the server).</p>
-        
-        <div id="dl-progress-area" class="hidden mt-lg">
-            <div class="progress">
-                <div class="progress-bar" id="dl-progress-bar" style="width: 0%"></div>
-            </div>
-            <p id="dl-status" class="text-small text-center mt-sm">Starting...</p>
-        </div>
-
-        <div class="flex gap-md justify-center mt-xl" id="dl-buttons">
-            <button class="btn btn-secondary" onclick="ui.hideModal('model-modal')">Cancel</button>
-            <button class="btn btn-primary" onclick="confirmDownload()">Download Model</button>
-        </div>
-    </div>
-</div>
-
 {% endblock %}
 
 {% block scripts %}
@@ -231,40 +205,7 @@ function selectAllVideos() {
 // --- Step 1: Split ---
 async function initiateSplit() {
     if(selectedVideos.size === 0) return ui.showAlert("Select videos first", "warning");
-    
-    // 1. Check Model
-    const modelName = document.getElementById('whisper-model').value.trim();
-    if(!modelName) return ui.showAlert("Enter model name", "error");
-    
-    const checkRes = await api.post('/api/video/check-model', { model_name: modelName });
-    if(!checkRes.ok) return;
-    const checkData = await checkRes.json();
-    
-    if(!checkData.exists) {
-        document.getElementById('modal-model-name').textContent = modelName;
-        ui.showModal('model-modal');
-        return;
-    }
-    
     startSplitJob();
-}
-
-async function confirmDownload() {
-    const modelName = document.getElementById('whisper-model').value.trim();
-    document.getElementById('dl-buttons').classList.add('hidden');
-    document.getElementById('dl-progress-area').classList.remove('hidden');
-    
-    try {
-        const res = await api.post('/api/video/download-model', { model_name: modelName });
-        const data = await res.json();
-        monitorJob(data.job_id, document.getElementById('dl-progress-bar'), document.getElementById('dl-status'), () => {
-            ui.hideModal('model-modal');
-            ui.showAlert("Model downloaded!");
-            startSplitJob(); // Continue to split
-        });
-    } catch(e) {
-        ui.showAlert("Download failed: " + e.message, "error");
-    }
 }
 
 async function startSplitJob() {
@@ -333,8 +274,7 @@ async function initiateTranscription() {
     const projectId = getCurrentProjectId();
     const body = {
         staging_id: currentStagingId,
-        files: segmentsData.map(s => s.filename),
-        whisper_model: document.getElementById('whisper-model').value
+        files: segmentsData.map(s => s.filename)
     };
     
     const res = await api.post(`/api/video/${projectId}/transcribe`, body);

@@ -33,7 +33,7 @@ class SplitRequest(BaseModel):
 class TranscribeRequest(BaseModel):
     staging_id: str
     files: List[str] # Filenames in staging
-    whisper_model: str
+    whisper_model: Optional[str] = None
 
 class CommitRequest(BaseModel):
     staging_id: str
@@ -305,7 +305,7 @@ async def start_transcribe(
             local_db.commit()
             local_db.close()
 
-    background_tasks.add_task(task_wrapper, job.id, staging_dir, request.files, request.whisper_model)
+    background_tasks.add_task(task_wrapper, job.id, staging_dir, request.files, None)
     return {"job_id": job.id}
 
 @router.get("/{project_id}/staging/{staging_id}/transcriptions")

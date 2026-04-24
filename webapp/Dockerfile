@@ -43,7 +43,7 @@ RUN mkdir -p /app/data/uploads /app/data/projects
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=3 \
     CMD python -c "import httpx; httpx.get('http://localhost:8000/health')" || exit 1
 
 # Run the application

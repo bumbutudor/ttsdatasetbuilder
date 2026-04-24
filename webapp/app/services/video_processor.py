@@ -35,6 +35,10 @@ _current_model_name = None
 _silero_model = None
 _silero_utils = None
 
+def is_local_model_reference(model_name: str) -> bool:
+    """Return True when the configured model points to an existing local directory."""
+    return Path(model_name).expanduser().exists()
+
 def load_silero_model():
     """Load Silero VAD model from torch hub."""
     global _silero_model, _silero_utils
@@ -58,6 +62,10 @@ def load_silero_model():
 
 def check_model_exists(model_name: str) -> bool:
     """Check if a HuggingFace model exists locally."""
+    model_path = Path(model_name).expanduser()
+    if model_path.exists():
+        return model_path.is_dir() and (model_path / "config.json").exists()
+
     try:
         from transformers import AutoModel
         # Încercăm să încărcăm configurația locală fără a descărca
@@ -68,6 +76,10 @@ def check_model_exists(model_name: str) -> bool:
 
 def download_model_task(model_name: str, progress_callback: Callable):
     """Background task to download model."""
+    if is_local_model_reference(model_name):
+        progress_callback(100, "Configured model is already available locally.")
+        return True
+
     try:
         progress_callback(10, "Initializing download...")
         progress_callback(30, "Downloading model weights (this may take a while)...")
@@ -86,14 +98,21 @@ def _load_whisper_model(model_name: str = None):
     global _whisper_processor, _whisper_model, _device, _current_model_name
     
     model_name = model_name or WHISPER_MODEL_NAME
+    local_files_only = is_local_model_reference(model_name)
     
     if _current_model_name == model_name and _whisper_model is not None:
         return _whisper_processor, _whisper_model, _device
     
     logger.info(f"Loading Whisper model: {model_name}...")
     try:
-        _whisper_processor = WhisperProcessor.from_pretrained(model_name)
-        _whisper_model = WhisperForConditionalGeneration.from_pretrained(model_name)
+        _whisper_processor = WhisperProcessor.from_pretrained(
+            model_name,
+            local_files_only=local_files_only,
+        )
+        _whisper_model = WhisperForConditionalGeneration.from_pretrained(
+            model_name,
+            local_files_only=local_files_only,
+        )
         _device = "cuda" if torch.cuda.is_available() else "cpu"
         _whisper_model.to(_device)
         _current_model_name = model_name
@@ -101,6 +120,11 @@ def _load_whisper_model(model_name: str = None):
         return _whisper_processor, _whisper_model, _device
     except Exception as e:
         raise RuntimeError(f"Failed to load Whisper model: {e}")
+
+def preload_whisper_model():
+    """Load the configured Whisper model at application startup."""
+    logger.info(f"Preloading configured Whisper model: {WHISPER_MODEL_NAME}")
+    return _load_whisper_model(WHISPER_MODEL_NAME)
 
 def convert_audio_for_whisper(input_path: str, output_path: str) -> bool:
     """
@@ -385,7 +409,7 @@ def split_audio_staging(
 def transcribe_staging(
     staging_folder: str,
     files_to_transcribe: List[str],
-    model_name: str,
+    model_name: Optional[str],
     progress_callback: Callable,
     check_cancel: Callable
 ) -> List[Dict]:

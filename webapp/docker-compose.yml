@@ -1,5 +1,5 @@
 services:
-  # Aplicația Principală (Backend + Frontend)
+  # Aplicatia Principala (Backend + Frontend)
   app:
     build:
       context: .
@@ -10,27 +10,31 @@ services:
     volumes:
       # Date persistente
       - ./data:/app/data
-      # Cache pentru Whisper (HuggingFace) ca să nu descarce la fiecare restart
+      # Modelele mari sunt montate ca volum, nu incluse in imagine
+      - ../models:/models:ro
+      # Cache pentru Whisper (HuggingFace) ca sa nu descarce la fiecare restart
       - huggingface_cache:/root/.cache/huggingface
     environment:
       - DATABASE_URL=sqlite:///./data/app.db
       - SECRET_KEY=${SECRET_KEY:-schimba_cheia_in_productie_teslagpu}
-      
-      # Setări AI
+
+      # Setari AI
       - AI_PROVIDER=ollama
-      - WHISPER_MODEL_NAME=TransferRapid/whisper-large-v3-turbo_ro
-      
+      - WHISPER_MODEL_NAME=/models/FineTunedWhisperModel
+      - WHISPER_PRELOAD_ON_STARTUP=true
+      - HF_TOKEN=${HF_TOKEN:-}
+
       # Conectare la containerul Ollama intern
       - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL_NAME=gemma3:4b
-    
+
     restart: unless-stopped
     networks:
       - tts-network
     depends_on:
       - ollama
-    
-    # ACTIVARE SUPORT GPU PENTRU WHISPER (PyTorch)
+
+    # Activare suport GPU pentru Whisper (PyTorch)
     deploy:
       resources:
         reservations:
@@ -44,15 +48,15 @@ services:
     image: ollama/ollama:latest
     container_name: tts-ollama
     volumes:
-      # Aici se vor salva modelele descărcate prin interfața web
+      # Aici se vor salva modelele descarcate prin interfata web
       - ollama_data:/root/.ollama
     ports:
       - "11434:11434"
     restart: unless-stopped
     networks:
       - tts-network
-    
-    # ACTIVARE SUPORT GPU PENTRU OLLAMA
+
+    # Activare suport GPU pentru Ollama
     deploy:
       resources:
         reservations:

@@ -26,13 +26,16 @@ services:
       - "8000"
     volumes:
       - ./webapp/data:/app/data
+      - ./models:/models:ro
       - huggingface_cache:/root/.cache/huggingface
     environment:
       - ROOT_PATH=/datasetBuilder
       - DATABASE_URL=sqlite:///./data/app.db
       - SECRET_KEY=${SECRET_KEY:-schimba_cheia_in_productie_teslagpu}
       - AI_PROVIDER=ollama
-      - WHISPER_MODEL_NAME=TransferRapid/whisper-large-v3-turbo_ro
+      - WHISPER_MODEL_NAME=/models/FineTunedWhisperModel
+      - WHISPER_PRELOAD_ON_STARTUP=true
+      - HF_TOKEN=${HF_TOKEN:-}
       - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL_NAME=gemma3:4b
     restart: unless-stopped

@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
-from app.config import WHISPER_MODEL_NAME, WHISPER_PRELOAD_ON_STARTUP
+from app.config import WHISPER_PRELOAD_ON_STARTUP
 from app.database import init_db
 from app.routes import auth, projects, files, generate, normalize, recorder, video, cleanse, dataset, settings, jobs
 from app.services.video_processor import preload_whisper_model
@@ -137,16 +137,7 @@ async def recorder_page(request: Request):
 @app.get("/video", response_class=HTMLResponse)
 async def video_page(request: Request):
     """Video to dataset page."""
-    configured_path = Path(WHISPER_MODEL_NAME)
-    whisper_model_label = configured_path.name if configured_path.is_absolute() else WHISPER_MODEL_NAME
-    whisper_model_location = "local server directory" if configured_path.exists() else "Hugging Face repository"
-    return render_template(
-        "video.html",
-        request,
-        configured_whisper_model=WHISPER_MODEL_NAME,
-        configured_whisper_model_label=whisper_model_label,
-        configured_whisper_model_location=whisper_model_location,
-    )
+    return render_template("video.html", request)
 
 
 @app.get("/cleanse", response_class=HTMLResponse)

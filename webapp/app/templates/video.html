@@ -15,7 +15,7 @@
     /* Stilul pentru textarea */
     .transcript-editor {
         width: 100%;
-        min-height: 90px;      /* Înălțime minimă mai mare */
+        min-height: 90px;      /* Inaltime minima mai mare */
         background: rgba(0, 0, 0, 0.2);
         border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 6px;
@@ -24,7 +24,7 @@
         font-family: 'Inter', sans-serif;
         font-size: 0.95rem;
         line-height: 1.6;
-        resize: vertical;      /* Permite utilizatorului să tragă de colț */
+        resize: vertical;      /* Permite utilizatorului sa traga de colt */
         overflow: hidden;      /* Ascunde bara de scroll (folosim auto-grow) */
         transition: border-color 0.2s, background 0.2s;
     }
@@ -36,7 +36,7 @@
         box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.1);
     }
 
-    /* Ajustare pentru coloana de acțiuni */
+    /* Ajustare pentru coloana de actiuni */
     .action-col {
         display: flex;
         justify-content: center;
@@ -46,33 +46,11 @@
     }
 </style>
 <div class="page-header">
-    <h1>🎬 Video to Dataset (Workflow)</h1>
+    <h1>Video to Dataset (Workflow)</h1>
     <p>Split video audio, review segments, transcribe, and add to dataset.</p>
 </div>
 
-<!-- Step 1: Settings & Files -->
 <div id="step-1" class="workflow-step">
-    <div class="card mb-xl">
-        <h3 class="mb-lg">1. Configuration</h3>
-        
-        <div class="form-group">
-            <label class="form-label">Configured Whisper Model</label>
-            <div class="form-control" style="display: flex; align-items: center; min-height: 48px;">
-                <code>{{ configured_whisper_model_label }}</code>
-            </div>
-            <small class="text-muted">
-                This workflow always uses the server-configured Whisper model from {{ configured_whisper_model_location }}.
-                Active value: <code>{{ configured_whisper_model }}</code>
-            </small>
-        </div>
-
-        <div class="form-group">
-            <label class="form-label">Segmentation</label>
-            <div class="text-muted">Automatically based on the current project type: TTS = 3–10s, STT = 3–30s (Silero VAD).</div>
-        </div>
-    </div>
-
-    <!-- Video Selection -->
     <div class="card mb-xl">
         <div class="card-header">
             <h3>Select Videos</h3>
@@ -308,7 +286,6 @@ function renderTranscripts() {
     tbody.innerHTML = transcriptsData.map((t, idx) => `
         <tr id="row-${idx}" class="fade-in">
             <td width="200">
-                <!-- Audio Player mai compact -->
                 <audio src="${withBase(`/api/video/${getCurrentProjectId()}/staging/${currentStagingId}/audio/${t.filename}`)}" 
                        controls 
                        style="width: 100%; height: 40px; margin-top: 5px;"></audio>
@@ -334,16 +311,14 @@ function renderTranscripts() {
         </tr>
     `).join('');
 
-    // Ajustează automat înălțimea pentru toate textarea-urile după randare
     setTimeout(() => {
         document.querySelectorAll('.transcript-editor').forEach(el => autoResize(el));
     }, 100);
 }
 
-// Funcție helper pentru auto-redimensionare
 function autoResize(element) {
-    element.style.height = 'auto'; // Resetăm înălțimea pentru a calcula corect
-    element.style.height = (element.scrollHeight + 2) + 'px'; // Setăm înălțimea la conținut
+    element.style.height = 'auto';
+    element.style.height = (element.scrollHeight + 2) + 'px';
 }
 
 function removeTranscript(idx) {
